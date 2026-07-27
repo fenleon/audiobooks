@@ -66,6 +66,7 @@ import com.stan.libbylight.libby.LibbySessionState
 import com.stan.libbylight.player.PlayerState
 import com.stan.libbylight.player.PlayerReadiness
 import com.stan.libbylight.player.LocalPlaybackController
+import com.stan.libbylight.player.BardMediaSessionManager
 import com.stan.libbylight.ui.LightBarButton
 import com.stan.libbylight.ui.LightBottomBar
 import com.stan.libbylight.ui.LightIcon
@@ -324,6 +325,21 @@ fun PlayerDebugScreen() {
             AudiobookProgressStore.markOpened(book)
             progressRevision++
             showBooks = false
+            if (
+                book.source == AudiobookSource.Libby &&
+                (!state.controlsFound || !LibbyBridge.hasActivePlayerFrame())
+            ) {
+                LocalPlaybackController.pause()
+                pauseLibbyWhenReady = true
+                val saved = AudiobookProgressStore.lastActiveAudiobook()
+                state = saved?.toRememberedPlayerState() ?: state.copy(
+                    isPlaying = false,
+                    controlsFound = false,
+                    diagnostic = "Connecting to Libby",
+                    readiness = PlayerReadiness.Preparing,
+                )
+                LibbyWebPlayer.openLoan(book.playbackReference)
+            }
             return
         }
         if (previous?.source == AudiobookSource.Local || previous?.source == AudiobookSource.Rss) {
@@ -388,7 +404,11 @@ fun PlayerDebugScreen() {
                 val rememberedRoute = current.playbackReference
                     .substringBefore('?')
                     .substringBefore('#')
-                if (liveRoute != rememberedRoute) {
+                if (
+                    liveRoute != rememberedRoute ||
+                    !state.controlsFound ||
+                    !LibbyBridge.hasActivePlayerFrame()
+                ) {
                     LocalPlaybackController.pause()
                     pauseLibbyWhenReady = true
                     state = persisted.toRememberedPlayerState()
@@ -783,6 +803,14 @@ fun PlayerDebugScreen() {
 
             delay(700)
         }
+    }
+
+    LaunchedEffect(activeBook, state, localPlayerState) {
+        val current = activeBook
+        BardMediaSessionManager.update(
+            current,
+            if (current?.source == AudiobookSource.Libby) state else localPlayerState,
+        )
     }
 
     LaunchedEffect(libbySessionState) {

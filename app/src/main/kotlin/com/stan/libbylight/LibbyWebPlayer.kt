@@ -176,7 +176,16 @@ object LibbyWebPlayer {
         require(loanUrl.startsWith("https://libbyapp.com/open/loan/")) {
             "Expected a Libby loan URL"
         }
-        requireWebView().loadUrl(loanUrl)
+        LibbyBridge.prepareForLoanOpen()
+        requireWebView().apply {
+            val currentRoute = url.orEmpty().substringBefore('?').substringBefore('#')
+            val requestedRoute = loanUrl.substringBefore('?').substringBefore('#')
+            if (currentRoute == requestedRoute) {
+                reload()
+            } else {
+                loadUrl(loanUrl)
+            }
+        }
     }
 
 

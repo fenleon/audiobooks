@@ -513,6 +513,25 @@ object LibbyBridge {
         )
     }
 
+    fun hasActivePlayerFrame(): Boolean = activeReplyProxy != null && activeFrameScore >= 0
+
+    /**
+     * An explicit loan open may target the same top-level URL after another source was active.
+     * In that case no URL-change callback occurs, so retire the old iframe proxy before reloading.
+     */
+    fun prepareForLoanOpen() {
+        updatePlaybackHost(false)
+        activeReplyProxy = null
+        activeFrameScore = -1
+        val waiting = pendingStateCallbacks.values.toList()
+        pendingStateCallbacks.clear()
+        waiting.forEach { callback ->
+            callback(PlayerState(diagnostic = "Reconnecting to Libby player"))
+        }
+        capabilityDiagnostic = "Waiting for active Libby player frame"
+        Log.d(BRIDGE_TAG, "player frame invalidated for explicit loan open")
+    }
+
     fun play() = command("play")
     fun pause() = command("pause")
     fun forward15() = command("forward15")
@@ -627,9 +646,7 @@ object LibbyBridge {
     }
 
     private fun updatePlaybackHost(isPlaying: Boolean) {
-        applicationContext?.let { context ->
-            LibbyPlaybackForegroundService.update(context, isPlaying)
-        }
+        com.stan.libbylight.player.BardMediaSessionManager.onLibbyPlayingChanged(isPlaying)
     }
 
 }

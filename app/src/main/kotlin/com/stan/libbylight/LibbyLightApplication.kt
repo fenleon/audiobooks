@@ -6,6 +6,7 @@ import com.stan.libbylight.library.AudiobookProgressStore
 import com.stan.libbylight.library.RssFeedRepository
 import com.stan.libbylight.library.RssDownloadManager
 import com.stan.libbylight.player.LocalPlaybackController
+import com.stan.libbylight.player.BardMediaSessionManager
 
 class LibbyLightApplication : Application() {
     override fun onCreate() {
@@ -16,5 +17,6 @@ class LibbyLightApplication : Application() {
         RssDownloadManager.init(this)
         LocalBookRepository.init(this)
         LocalPlaybackController.init(this)
+        BardMediaSessionManager.init(this)
     }
 }

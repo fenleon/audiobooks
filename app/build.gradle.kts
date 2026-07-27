@@ -30,8 +30,8 @@ android {
         applicationId = "com.stan.libbylight"
         minSdk = 33
         targetSdk = 34
-        versionCode = 3
-        versionName = "0.1.0-alpha3"
+        versionCode = 4
+        versionName = "0.1.0-alpha4"
     }
 
     signingConfigs {
@@ -91,5 +91,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("androidx.webkit:webkit:1.9.0")
+    implementation("androidx.media:media:1.7.0")
     implementation("com.thelightphone.lp3keyboard:ui:0.0.11")
+
+    testImplementation("junit:junit:4.13.2")
 }

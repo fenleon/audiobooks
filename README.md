@@ -12,7 +12,7 @@ Bard is currently in **alpha**. While it is already suitable for daily use, feat
 
 > **Current Status:** Alpha
 >
-> **Current Version:** 0.1.0-alpha3 (versionCode 3)
+> **Current Version:** 0.1.0-alpha5 (versionCode 5)
 
 ---
 
@@ -37,7 +37,7 @@ Regardless of source, every audiobook appears in the same library and uses the s
 
 ## Local Audiobooks
 
-Bard supports locally stored audiobooks without requiring a cloud account or subscription.
+Bard supports both single-file and multi-file audiobooks stored locally without requiring a cloud account or subscription.
 
 ### Supported Formats
 
@@ -46,14 +46,17 @@ Bard supports locally stored audiobooks without requiring a cloud account or sub
 
 ### Features
 
-- Manual library scanning
+- Single-file audiobooks
+- Multi-file audiobooks organized as folders
+- Continuous playback across multiple files
+- Combined timeline and duration
+- Persistent listening progress across the entire book
 - Resume playback
-- Persistent listening progress
 - Recent-first library ordering
 - Unified player interface
 - Background playback
 
-Local scanning is intentionally limited to the top level of the shared `Audiobooks` folder. Bard does not scan subfolders or copy books into app-private storage.
+Bard scans the top level of the shared Audiobooks folder. Individual .mp3 and .m4b files are treated as standalone books. Each folder inside Audiobooks is treated as a single audiobook, with all supported audio files inside it played continuously in alphabetical order. Nested folders are supported and their contents are ordered by relative path. Bard never copies books into app-private storage.
 
 ---
 
@@ -91,8 +94,11 @@ Removing a downloaded audiobook deletes only Bard's private offline copy while p
 
 1. Connect your Light Phone III to your computer.
 2. Create an `Audiobooks` folder in shared device storage if it does not already exist.
-3. Copy single-file `.mp3` or `.m4b` audiobooks into that folder.
-4. In Bard, open:
+3. Either:
+  - copy a single .mp3 or .m4b directly into the Audiobooks folder, or
+  - create one folder per audiobook and place its audio files inside.
+
+Files are played in alphabetical order, so numbering them (01, 02, 03, …) is recommended.4. In Bard, open:
 
 ```
 Settings → Local Books → Scan for Books
@@ -140,8 +146,8 @@ Bard is currently designed for the Light Phone III and Android 13 or newer.
 
 Current limitations include:
 
-- Local audiobooks must be single MP3 or M4B files (multi-file books are not yet supported).
-- Chapter navigation is not currently available.
+- Multi-file local audiobooks are played in filename order. Chapter metadata within multi-file books is not yet exposed in the interface.
+- Embedded chapter navigation is not supported.
 - Cover art is intentionally omitted throughout the interface.
 - RSS feeds support one audio enclosure per item.
 - Authenticated RSS feeds are not supported.
@@ -190,7 +196,9 @@ Local audiobooks remain on your device, and RSS downloads are stored only in Bar
 
 When using public library loans, authentication and media delivery continue to be handled by the provider's own systems.
 
-Release builds disable WebView debugging.
+Release builds disable WebView debugging. 
+
+Bard exposes a native Android media session so Bluetooth devices, Android, and LightOS can display playback controls. Only display metadata (title, author, duration, playback state) is published. Library credentials, URLs, cookies, and DRM-protected information are never exposed through the media session.
 
 ---
 
@@ -198,9 +206,7 @@ Release builds disable WebView debugging.
 
 Planned improvements include:
 
-- Multi-file audiobook support
 - Chapter navigation
-- Improved Bluetooth controls
 - Expanded RSS capabilities
 - Additional playback refinements
 - Improved download management

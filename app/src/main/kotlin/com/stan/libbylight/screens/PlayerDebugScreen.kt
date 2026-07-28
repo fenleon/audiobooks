@@ -473,7 +473,8 @@ fun PlayerDebugScreen() {
                                 val request = runCatching {
                                     MediaStore.createDeleteRequest(
                                         context.contentResolver,
-                                        listOf(Uri.parse(book.playbackReference)),
+                                        book.parts.map { Uri.parse(it.playbackReference) }
+                                            .ifEmpty { listOf(Uri.parse(book.playbackReference)) },
                                     )
                                 }.getOrNull()
                                 if (request != null) {
@@ -1915,7 +1916,7 @@ private fun LocalBooksScreen(
             ) {
                 Spacer(Modifier.height(0.75f.gridUnitsAsDp()))
                 LightText(
-                    "Place your audiobook files directly into the Light Phone III/Audiobooks folder (create one if none exists).",
+                    "Place audiobook files or folders inside the Light Phone III/Audiobooks folder (create one if none exists).",
                     variant = LightTextVariant.Paragraph,
                 )
                 Spacer(Modifier.height(0.75f.gridUnitsAsDp()))

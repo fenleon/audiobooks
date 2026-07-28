@@ -1,5 +1,6 @@
 # Android
 .gradle/
+.kotlin/
 **/build/
 local.properties
 keystore.properties

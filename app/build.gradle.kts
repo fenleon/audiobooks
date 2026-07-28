@@ -30,8 +30,8 @@ android {
         applicationId = "com.stan.libbylight"
         minSdk = 33
         targetSdk = 34
-        versionCode = 4
-        versionName = "0.1.0-alpha4"
+        versionCode = 5
+        versionName = "0.1.0-alpha5"
     }
 
     signingConfigs {

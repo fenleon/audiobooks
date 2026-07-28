@@ -4,11 +4,7 @@
   optional Libby loans, and optional RSS audiobooks into one calm Books screen and one consistent player
   interface.
 
-  Bard is currently private alpha software. The current application version is 0.1.0-alpha3 (versionCode 3).
-
-  ## What Bard Supports
-
-  ### Local audiobooks
+  Bard is currently alpha software. The current application version is 0.1.0-alpha5 (versionCode 5).
 
 ## Screenshots
 
@@ -27,8 +23,13 @@
 
 ## Features
 
-  Local scanning is intentionally limited to the top level of the Audiobooks folder. Bard does not scan
-  subfolders or copy local books into app-private storage.
+  ### Local audiobooks
+
+  - Single-file MP3 and M4B audiobooks placed directly in the shared `Audiobooks` folder.
+  - Multi-file audiobooks organized as folders inside `Audiobooks`.
+  - Parts play continuously in alphabetical order and share one combined timeline and saved position.
+  - Nested audio files within a book folder are included and ordered by relative path.
+  - Local books remain in shared device storage; Bard does not copy them into app-private storage.
 
   ### Libby loans
 
@@ -37,6 +38,7 @@
   - Loan progress and due-date metadata when supplied by Libby.
   - Play/pause, ±15 seconds, absolute seeking, and playback speed through Libby's own player controls.
   - Background playback supported by a media-playback foreground service while a Libby book is actively playing.
+  - Bluetooth, car, and LightOS media controls through Bard's native Android media session.
 
   Bard keeps one application-scoped WebView for the Libby session and player. It uses document-start JavaScript
   injection, a WebMessage bridge, and Libby's own BIF.objects.spool controls. Bard does not extract protected
@@ -68,6 +70,7 @@
   - Playback speeds of 1×, 1.25×, 1.5×, 1.75×, and 2×.
   - Persisted position, duration, speed, and last-played ordering.
   - Now Playing restoration after app or phone restart without autoplay.
+  - Bluetooth and LightOS play, pause, seek, and transport controls.
 
   The interface is source-independent, but playback is not one single engine: Libby uses its persistent hidden
   WebView player, while local and RSS books use Android's native media player.
@@ -91,8 +94,9 @@
 
   1. Connect the Light Phone III to a computer.
   2. Create an Audiobooks folder at the top level of shared device storage if it does not already exist.
-  3. Place single-file .mp3 or .m4b audiobooks directly in that folder.
-  4. In Bard, open Settings → Local Books → Scan for Books.
+  3. Place a single `.mp3`/`.m4b` file directly in that folder, or add one folder per multi-file audiobook.
+  4. For a multi-file book, name its parts in playback order (for example `01`, `02`, `03`).
+  5. In Bard, open Settings → Local Books → Scan for Books.
 
   Android may ask Bard for audio-library permission so it can discover these shared files. Bard does not request
   broad all-files storage access.
@@ -122,17 +126,18 @@
 
   - Internet and network-state access for Libby and RSS.
   - Audio-library read access for the fixed shared Audiobooks folder.
-  - Media-playback foreground-service access for reliable Libby screen-off playback.
+  - Media-playback foreground-service access for reliable screen-off playback.
   - Vibration support supplied by the embedded Light keyboard component.
 
-  While Libby audio is actively playing, Android shows a private ongoing Bard notification. The notification
-  keeps Bard's hidden WebView process active when the screen is off and is removed when Libby playback pauses or
-  stops.
+  While audio is actively playing, Android shows a private ongoing Bard media notification. For Libby, this also
+  keeps Bard's hidden WebView process active when the screen is off. When paused, Bard releases foreground-service
+  status but retains a dismissible media notification so LightOS and Bluetooth resume controls remain available.
+  Stopping playback removes the notification.
 
   ## Current Limitations
 
   - Light Phone III / Android 13 or newer is the current target environment.
-  - Local books are one MP3 or M4B file each; multi-file books are unsupported.
+  - Multi-file local books use filename/path order; there is no chapter navigation or chapter metadata UI.
   - No chapter navigation or embedded-chapter UI.
   - Bard's UI never displays cover art.
   - RSS expects one supported audio enclosure per item.
@@ -154,6 +159,7 @@
   - RssFeedRepository persists, fetches, securely parses, and caches RSS feeds.
   - RssDownloadManager owns durable RSS offline files and download state.
   - LocalPlaybackController handles local files and RSS streams/downloads.
+  - BardMediaSessionManager publishes one Android media session and routes system controls to the active source.
   - LibbyWebPlayer owns the persistent application-scoped WebView.
   - LibbyBridge translates source-neutral player actions to Libby's player.
   - AudiobookProgressStore persists playback state, last-active identity, and recent-first ordering across

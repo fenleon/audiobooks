@@ -6,6 +6,11 @@ enum class AudiobookSource {
     Rss,
 }
 
+data class AudiobookPart(
+    val playbackReference: String,
+    val durationMilliseconds: Long,
+)
+
 data class Audiobook(
     val id: String,
     val source: AudiobookSource,
@@ -21,6 +26,7 @@ data class Audiobook(
     val progressPercentOverride: Int? = null,
     val dueText: String = "",
     val fileSizeBytes: Long = 0,
+    val parts: List<AudiobookPart> = emptyList(),
 ) {
     val progressPercent: Int
         get() = progressPercentOverride ?: if (durationMilliseconds > 0) {

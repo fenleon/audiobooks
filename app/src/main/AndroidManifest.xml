@@ -11,7 +11,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
     <application
-        android:name=".LibbyLightApplication"
+        android:name=".BardApplication"
         android:allowBackup="false"
         android:icon="@android:mipmap/sym_def_app_icon"
         android:label="Bard"
@@ -30,7 +30,7 @@
         </activity>
 
         <service
-            android:name=".LibbyPlaybackForegroundService"
+            android:name=".PlaybackForegroundService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback"
             android:stopWithTask="false" />

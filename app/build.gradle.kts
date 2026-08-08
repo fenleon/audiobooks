@@ -91,5 +91,4 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("androidx.webkit:webkit:1.9.0")
-    implementation("com.thelightphone.lp3keyboard:ui:0.0.11")
 }

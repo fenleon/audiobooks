@@ -22,6 +22,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.resume
@@ -73,10 +74,14 @@ object LocalBookRepository {
 
     suspend fun deleteBook(book: Audiobook): Boolean = withContext(Dispatchers.IO) {
         if (book.source != AudiobookSource.Local) return@withContext false
-        val uri = runCatching { Uri.parse(book.playbackReference) }.getOrNull()
-            ?: return@withContext false
-        val deleted = runCatching { appContext.contentResolver.delete(uri, null, null) > 0 }
-            .getOrDefault(false)
+        val references = book.parts.map { it.playbackReference }
+            .ifEmpty { listOf(book.playbackReference) }
+        val deleted = references.all { reference ->
+            val uri = runCatching { Uri.parse(reference) }.getOrNull()
+                ?: return@all false
+            runCatching { appContext.contentResolver.delete(uri, null, null) > 0 }
+                .getOrDefault(false)
+        }
         if (deleted) scan()
         deleted
     }
@@ -104,24 +109,28 @@ object LocalBookRepository {
 
         // MediaStore does not represent empty directories. This existence-only probe lets Bard
         // distinguish a missing top-level folder while all file discovery remains in MediaStore.
-        val folderExists = File(
+        val rootDirectory = File(
             Environment.getExternalStorageDirectory(),
             AUDIOBOOKS_DIRECTORY,
-        ).isDirectory
+        )
+        val folderExists = rootDirectory.isDirectory
+        // Discover every audio file under Audiobooks/ (any depth), so books kept in
+        // subfolders are indexed directly instead of waiting for a MediaStore rescan.
         val directCandidates = if (folderExists) {
-            File(Environment.getExternalStorageDirectory(), AUDIOBOOKS_DIRECTORY)
-                .listFiles()
-                ?.filter { file ->
-                    file.isFile &&
-                        !file.name.startsWith('.') &&
-                        file.name.hasSupportedExtension()
-                }
+            runCatching {
+                rootDirectory.walkTopDown()
+                    .filter { file ->
+                        file.isFile &&
+                            !file.name.startsWith('.') &&
+                            file.name.hasSupportedExtension()
+                    }
+                    .toList()
+            }.getOrDefault(emptyList())
         } else {
             emptyList()
         }
-        val directlyReadable = directCandidates != null
         val scannedUris = withTimeoutOrNull(10_000) {
-            directCandidates?.let { requestMediaIndexing(it) }.orEmpty()
+            directCandidates.let { requestMediaIndexing(it) }
         }.orEmpty()
         Log.d(TAG, "scan generation=$generation strategy=direct-index-and-mediastore")
 
@@ -131,13 +140,14 @@ object LocalBookRepository {
             add(MediaStore.Audio.Media.DISPLAY_NAME)
             add(MediaStore.Audio.Media.MIME_TYPE)
             add(MediaStore.Audio.Media.SIZE)
+            if (Build.VERSION.SDK_INT >= 29) add(MediaStore.Audio.Media.RELATIVE_PATH)
             if (Build.VERSION.SDK_INT < 29) add(MediaStore.Audio.Media.DATA)
         }.toTypedArray()
         val selection: String
         val arguments: Array<String>
         if (Build.VERSION.SDK_INT >= 29) {
-            selection = "${MediaStore.Audio.Media.RELATIVE_PATH} = ?"
-            arguments = arrayOf("$AUDIOBOOKS_DIRECTORY/")
+            selection = "${MediaStore.Audio.Media.RELATIVE_PATH} LIKE ?"
+            arguments = arrayOf("$AUDIOBOOKS_DIRECTORY/%")
         } else {
             val root = Environment.getExternalStorageDirectory().absolutePath
             selection = "${MediaStore.Audio.Media.DATA} LIKE ?"
@@ -148,7 +158,7 @@ object LocalBookRepository {
         var m4bCount = 0
         val books = try {
             val accepted = linkedMapOf<String, Audiobook>()
-            val directNames = directCandidates?.map { it.name.lowercase() }?.toSet().orEmpty()
+            val folderParts = linkedMapOf<String, LinkedHashMap<String, LocalPartCandidate>>()
             buildList {
                 appContext.contentResolver.query(
                     collection,
@@ -161,26 +171,76 @@ object LocalBookRepository {
                     val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME)
                     val mimeColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.MIME_TYPE)
                     val sizeColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.SIZE)
+                    val relativePathColumn = cursor.getColumnIndex(MediaStore.Audio.Media.RELATIVE_PATH)
                     val dataColumn = cursor.getColumnIndex(MediaStore.Audio.Media.DATA)
                     while (cursor.moveToNext()) {
                         val displayName = cursor.getString(nameColumn).orEmpty()
                         val mimeType = cursor.getString(mimeColumn).orEmpty()
                         val dataPath = if (dataColumn >= 0) cursor.getString(dataColumn).orEmpty() else ""
                         if (displayName.startsWith('.') || dataPath.substringAfterLast('/').startsWith('.')) continue
-                        if (directlyReadable && displayName.lowercase() !in directNames) continue
                         val isMp3 = displayName.endsWith(".mp3", ignoreCase = true) || mimeType == "audio/mpeg"
                         val isM4b = displayName.endsWith(".m4b", ignoreCase = true)
                         if (!isMp3 && !isM4b) continue
                         if (isM4b) m4bCount++ else mp3Count++
-                        if (Build.VERSION.SDK_INT < 29) {
-                            val directParent = File(dataPath).parentFile?.name
-                            if (directParent != AUDIOBOOKS_DIRECTORY) continue
+                        val relativePath = if (relativePathColumn >= 0) {
+                            cursor.getString(relativePathColumn).orEmpty()
+                        } else {
+                            ""
                         }
+                        if (Build.VERSION.SDK_INT < 29) {
+                            val root = Environment.getExternalStorageDirectory().absolutePath
+                            if (!dataPath.startsWith("$root/$AUDIOBOOKS_DIRECTORY/")) continue
+                        }
+                        val folderPath = folderPathOf(
+                            relativePath = relativePath,
+                            dataPath = dataPath,
+                            rootDirectory = rootDirectory,
+                        )
 
                         val mediaId = cursor.getLong(idColumn)
                         val uri = ContentUris.withAppendedId(collection, mediaId)
-                        val stableId = "external:$mediaId"
                         val embedded = readMetadata(uri)
+                        val size = cursor.getLong(sizeColumn).coerceAtLeast(0)
+                        if (folderPath == null) {
+                            val stableId = "external:$mediaId"
+                            val stored = AudiobookProgressStore.read(AudiobookSource.Local, stableId)
+                            val duration = embedded.durationMilliseconds.takeIf { it > 0 }
+                                ?: stored.durationMilliseconds.takeIf { it > 0 }
+                                ?: 0L
+                            accepted[stableId] = audiobookFrom(
+                                stableId = stableId,
+                                displayName = displayName,
+                                uri = uri,
+                                embedded = embedded,
+                                stored = stored,
+                                duration = duration,
+                                fileSizeBytes = size,
+                            )
+                        } else {
+                            folderParts.getOrPut(folderPath) { linkedMapOf() }[displayName.lowercase()] =
+                                LocalPartCandidate(
+                                    displayName = displayName,
+                                    uri = uri,
+                                    embedded = embedded,
+                                    fileSizeBytes = size,
+                                )
+                        }
+                    }
+                }
+                scannedUris.forEach { (path, uri) ->
+                    val relative = runCatching { File(path).relativeTo(rootDirectory).invariantSeparatorsPath }
+                        .getOrDefault(File(path).name)
+                    val displayName = File(path).name
+                    val folderPath = relative.substringBeforeLast('/').takeIf { '/' in relative }
+                    val mediaId = runCatching { ContentUris.parseId(uri) }.getOrNull() ?: return@forEach
+                    val stableId = "external:$mediaId"
+                    if (stableId in accepted) return@forEach
+                    if (folderParts.values.any { parts -> parts.values.any { it.uri == uri } }) {
+                        return@forEach
+                    }
+                    val embedded = readMetadata(uri)
+                    if (displayName.endsWith(".m4b", true)) m4bCount++ else mp3Count++
+                    if (folderPath == null) {
                         val stored = AudiobookProgressStore.read(AudiobookSource.Local, stableId)
                         val duration = embedded.durationMilliseconds.takeIf { it > 0 }
                             ?: stored.durationMilliseconds.takeIf { it > 0 }
@@ -192,28 +252,49 @@ object LocalBookRepository {
                             embedded = embedded,
                             stored = stored,
                             duration = duration,
-                            fileSizeBytes = cursor.getLong(sizeColumn).coerceAtLeast(0),
+                            fileSizeBytes = querySize(uri),
                         )
+                    } else {
+                        folderParts.getOrPut(folderPath) { linkedMapOf() }[displayName.lowercase()] =
+                            LocalPartCandidate(
+                                displayName = displayName,
+                                uri = uri,
+                                embedded = embedded,
+                                fileSizeBytes = querySize(uri),
+                            )
                     }
                 }
-                scannedUris.forEach { (displayName, uri) ->
-                    val mediaId = runCatching { ContentUris.parseId(uri) }.getOrNull() ?: return@forEach
-                    val stableId = "external:$mediaId"
-                    if (stableId in accepted) return@forEach
-                    val embedded = readMetadata(uri)
+                folderParts.forEach { (folderPath, candidatesByPath) ->
+                    val ordered = candidatesByPath.values.sortedWith(
+                        compareBy(String.CASE_INSENSITIVE_ORDER) { it.displayName },
+                    )
+                    val stableId = "folder:${folderPath.normalizedFolderHash()}"
                     val stored = AudiobookProgressStore.read(AudiobookSource.Local, stableId)
-                    val duration = embedded.durationMilliseconds.takeIf { it > 0 }
-                        ?: stored.durationMilliseconds.takeIf { it > 0 }
-                        ?: 0L
-                    if (displayName.endsWith(".m4b", true)) m4bCount++ else mp3Count++
-                    accepted[stableId] = audiobookFrom(
-                        stableId = stableId,
-                        displayName = displayName,
-                        uri = uri,
-                        embedded = embedded,
-                        stored = stored,
-                        duration = duration,
-                        fileSizeBytes = querySize(uri),
+                    val duration = ordered.sumOf { it.embedded.durationMilliseconds.coerceAtLeast(0) }
+                        .takeIf { it > 0 } ?: stored.durationMilliseconds
+                    accepted[stableId] = Audiobook(
+                        id = stableId,
+                        source = AudiobookSource.Local,
+                        title = folderPath.substringAfterLast('/'),
+                        author = ordered.firstNotNullOfOrNull {
+                            it.embedded.author.takeIf(String::isNotBlank)
+                        }.orEmpty(),
+                        playbackReference = ordered.first().uri.toString(),
+                        durationMilliseconds = duration,
+                        positionMilliseconds = stored.positionMilliseconds.coerceAtMost(
+                            duration.takeIf { it > 0 } ?: Long.MAX_VALUE,
+                        ),
+                        playbackSpeed = stored.playbackSpeed,
+                        completed = stored.completed,
+                        lastPlayedAtMilliseconds = stored.lastPlayedAtMilliseconds,
+                        lastUpdatedAtMilliseconds = stored.lastUpdatedAtMilliseconds,
+                        fileSizeBytes = ordered.sumOf { it.fileSizeBytes },
+                        parts = ordered.map {
+                            AudiobookPart(
+                                playbackReference = it.uri.toString(),
+                                durationMilliseconds = it.embedded.durationMilliseconds,
+                            )
+                        },
                     )
                 }
                 addAll(accepted.values)
@@ -247,7 +328,7 @@ object LocalBookRepository {
                 files.map { if (it.name.endsWith(".m4b", true)) "audio/mp4" else "audio/mpeg" }
                     .toTypedArray(),
             ) { path, uri ->
-                if (uri != null) indexed[File(path).name] = uri
+                if (uri != null) indexed[path] = uri
                 if (remaining.decrementAndGet() == 0 && continuation.isActive) {
                     continuation.resume(indexed.toMap())
                 }
@@ -321,6 +402,42 @@ object LocalBookRepository {
 
     private fun String.hasSupportedExtension(): Boolean =
         endsWith(".mp3", ignoreCase = true) || endsWith(".m4b", ignoreCase = true)
+
+    /**
+     * Resolves the folder a file belongs to, relative to Audiobooks/ (e.g. "MyTestBook" or
+     * "Series/Hemingway/ForWhomTheBellTolls"). Files directly inside Audiobooks/ return null
+     * and stay standalone single-file books.
+     */
+    private fun folderPathOf(
+        relativePath: String,
+        dataPath: String,
+        rootDirectory: File,
+    ): String? {
+        if (relativePath.isNotBlank()) {
+            val folder = relativePath.removePrefix("$AUDIOBOOKS_DIRECTORY/").trim('/')
+            return folder.takeIf(String::isNotBlank)
+        }
+        if (dataPath.isNotBlank()) {
+            val parent = File(dataPath).parentFile ?: return null
+            val relative = runCatching { parent.relativeTo(rootDirectory).invariantSeparatorsPath }
+                .getOrDefault("")
+            return relative.takeIf { it.isNotBlank() && it != "." }
+        }
+        return null
+    }
+
+    private fun String.normalizedFolderHash(): String {
+        val bytes = MessageDigest.getInstance("SHA-256")
+            .digest(lowercase().trim().toByteArray())
+        return bytes.take(12).joinToString("") { "%02x".format(it) }
+    }
+
+    private data class LocalPartCandidate(
+        val displayName: String,
+        val uri: Uri,
+        val embedded: EmbeddedMetadata,
+        val fileSizeBytes: Long,
+    )
 
     private data class EmbeddedMetadata(
         val title: String = "",

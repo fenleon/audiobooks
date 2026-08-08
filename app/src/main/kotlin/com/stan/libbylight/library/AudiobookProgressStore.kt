@@ -120,29 +120,6 @@ object AudiobookProgressStore {
         mutableActiveAudiobook.value = null
     }
 
-    fun rememberedLibbyBooks(): List<Audiobook> = preferences()
-        .getStringSet("remembered.Libby.ids", emptySet())
-        .orEmpty()
-        .mapNotNull { id ->
-            val progress = read(AudiobookSource.Libby, id)
-            if (progress.playbackReference.isBlank() || progress.title.isBlank()) return@mapNotNull null
-            Audiobook(
-                id = id,
-                source = AudiobookSource.Libby,
-                title = progress.title,
-                author = progress.author,
-                playbackReference = progress.playbackReference,
-                durationMilliseconds = progress.durationMilliseconds,
-                positionMilliseconds = progress.positionMilliseconds,
-                playbackSpeed = progress.playbackSpeed,
-                completed = progress.completed,
-                lastPlayedAtMilliseconds = progress.lastPlayedAtMilliseconds,
-                lastUpdatedAtMilliseconds = progress.lastUpdatedAtMilliseconds,
-                progressPercentOverride = progress.progressPercentOverride,
-                dueText = progress.dueText,
-            )
-        }
-
     fun saveMetadata(book: Audiobook) {
         val existing = read(book.source, book.id)
         write(
@@ -156,14 +133,6 @@ object AudiobookProgressStore {
                 dueText = book.dueText,
             ),
         )
-    }
-
-    /** A Ready shelf is authoritative; retain only loans present in that complete snapshot. */
-    fun reconcileRememberedLibbyBooks(liveBooks: List<Audiobook>) {
-        liveBooks.forEach(::saveMetadata)
-        preferences().edit()
-            .putStringSet("remembered.Libby.ids", liveBooks.map { it.id }.toSet())
-            .commit()
     }
 
     fun lastActiveAudiobook(): PersistedActiveAudiobook? {
@@ -256,13 +225,6 @@ object AudiobookProgressStore {
             .putString("$key.author", progress.author)
             .putInt("$key.progressPercent", progress.progressPercentOverride ?: -1)
             .putString("$key.dueText", progress.dueText)
-            .also { editor ->
-                if (source == AudiobookSource.Libby) {
-                    val ids = preferences().getStringSet("remembered.Libby.ids", emptySet())
-                        .orEmpty() + id
-                    editor.putStringSet("remembered.Libby.ids", ids)
-                }
-            }
             .commit()
     }
 

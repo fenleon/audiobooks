@@ -9,16 +9,17 @@ import android.content.Context
 import android.content.Intent
 import android.os.IBinder
 import android.util.Log
+import com.stan.libbylight.player.LocalPlaybackController
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * Keeps Bard's existing process and application-scoped Libby WebView perceptible while Libby plays.
- * The service does not own playback, create a WebView, or issue any player command.
+ * Keeps Bard's process alive while local audiobook playback continues in the background.
+ * The service does not own playback or issue any player command; LocalPlaybackController does.
  */
-class LibbyPlaybackForegroundService : Service() {
+class PlaybackForegroundService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
@@ -63,10 +64,13 @@ class LibbyPlaybackForegroundService : Service() {
             },
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
+        val bookTitle = LocalPlaybackController.state.value.title
+            .takeIf { it.isNotBlank() && it != "Audiobook" }
+            ?: "Audiobook"
         return Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_audio_message_white)
             .setContentTitle("Bard")
-            .setContentText("Libby playback active")
+            .setContentText("Listening to $bookTitle")
             .setContentIntent(openBard)
             .setCategory(Notification.CATEGORY_TRANSPORT)
             .setOngoing(true)
@@ -79,7 +83,7 @@ class LibbyPlaybackForegroundService : Service() {
     companion object {
         private const val CHANNEL_ID = "bard_playback"
         private const val NOTIFICATION_ID = 41
-        private const val TAG = "LibbyPlaybackService"
+        private const val TAG = "PlaybackService"
         private val running = AtomicBoolean(false)
         private val mutableStartFailed = MutableStateFlow(false)
         val startFailed: StateFlow<Boolean> = mutableStartFailed.asStateFlow()
@@ -90,7 +94,7 @@ class LibbyPlaybackForegroundService : Service() {
                 if (running.compareAndSet(false, true)) {
                     try {
                         appContext.startForegroundService(
-                            Intent(appContext, LibbyPlaybackForegroundService::class.java),
+                            Intent(appContext, PlaybackForegroundService::class.java),
                         )
                     } catch (error: RuntimeException) {
                         running.set(false)
@@ -101,7 +105,7 @@ class LibbyPlaybackForegroundService : Service() {
             } else if (running.compareAndSet(true, false)) {
                 mutableStartFailed.value = false
                 appContext.stopService(
-                    Intent(appContext, LibbyPlaybackForegroundService::class.java),
+                    Intent(appContext, PlaybackForegroundService::class.java),
                 )
             }
         }

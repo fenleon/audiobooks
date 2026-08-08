@@ -8,8 +8,7 @@ import com.stan.libbylight.library.AudiobookProgressStore
 import com.stan.libbylight.screens.PlayerDebugScreen
 
 /**
- * Step 2: Libby's normal UI remains fully usable.
- * The temporary native player panel appears only on /open/loan/ pages.
+ * Bard entry point. Shows the local-only audiobook UI.
  */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {

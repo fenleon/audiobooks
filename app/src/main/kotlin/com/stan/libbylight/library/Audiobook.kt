@@ -1,10 +1,14 @@
 package com.stan.libbylight.library
 
 enum class AudiobookSource {
-    Libby,
     Local,
-    Rss,
 }
+
+/** One physical audio file within a multi-file audiobook (a folder book). */
+data class AudiobookPart(
+    val playbackReference: String,
+    val durationMilliseconds: Long,
+)
 
 data class Audiobook(
     val id: String,
@@ -21,6 +25,7 @@ data class Audiobook(
     val progressPercentOverride: Int? = null,
     val dueText: String = "",
     val fileSizeBytes: Long = 0,
+    val parts: List<AudiobookPart> = emptyList(),
 ) {
     val progressPercent: Int
         get() = progressPercentOverride ?: if (durationMilliseconds > 0) {

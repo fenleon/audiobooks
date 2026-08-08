@@ -31,8 +31,7 @@ SOFTWARE.
 
 ## Other dependencies
 
-Bard also depends on AndroidX, Jetpack Compose, Kotlin, Kotlin Coroutines, and
-Android WebKit components distributed under their respective open-source
-licenses. The LP3 keyboard dependency is supplied by The Light Phone and may
-include transitive AndroidX and Material components. Those projects retain
-their own copyright and licensing terms; this notice does not replace them.
+Bard also depends on AndroidX, Jetpack Compose, Kotlin, and Kotlin Coroutines
+components distributed under their respective open-source licenses. Those
+projects retain their own copyright and licensing terms; this notice does not
+replace them.

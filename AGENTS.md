@@ -44,27 +44,21 @@ The application consists of three primary experiences:
 - Player
 - Settings
 
-Books from every enabled source appear together in one unified library.
+All books appear together in one unified library.
 
 The user should not need to think about where a book came from.
 
-Source-specific configuration belongs only in Settings.
-
-The player should be identical regardless of source.
+The player should be identical for every book.
 
 ---
 
 # Sources
 
-Bard currently supports or intends to support:
+Bard is a local-only audiobook player.
 
-- Local audiobook folder (primary)
-- Libby (optional)
-- RSS feeds (optional)
+All audiobooks come from the shared `Audiobooks` folder on device storage. A single audio file directly inside `Audiobooks/` is a standalone book. Every folder inside `Audiobooks/` is one book whose audio files play continuously in filename order.
 
-Local audiobooks are the primary source.
-
-Libby and RSS extend the library—they should never define the application's architecture.
+There is no Libby, RSS, streaming, or cloud source, and the architecture should never grow one implicitly.
 
 ---
 
@@ -151,28 +145,25 @@ If the answer is uncertain, prefer not to implement the feature.
 
 # Current Architecture
 
-This repository is currently a single-module Kotlin Android application using Jetpack Compose.
-
-The existing Libby integration is working and should be preserved while the rest of the application evolves around it.
+This repository is a single-module Kotlin Android application using Jetpack Compose.
 
 Current major components:
 
-- `LibbyLightApplication`
-- `LibbyWebPlayer`
-- `LibbyBridge`
-- `PlayerDebugScreen`
-- `LoanItem`
-- `PlayerState`
+- `BardApplication` — initializes progress storage, the local book repository, and playback.
+- `LocalBookRepository` — scans `Audiobooks/` (any depth) into single-file and folder books.
+- `LocalPlaybackController` — MediaPlayer playback, including continuous multi-part playback.
+- `PlaybackForegroundService` — keeps playback alive in the background.
+- `AudiobookProgressStore` — persistent listening position, speed, and ordering metadata.
+- `PlayerDebugScreen` — the Compose UI (library, player, settings).
+- `ui/` — reusable Light-style Compose components.
 
 The UI package already contains reusable Light-style Compose components.
-
-Future work should migrate toward those components rather than creating parallel UI systems.
 
 ---
 
 # Architectural Direction
 
-The application should evolve toward source-independent domain models.
+The application should evolve toward simple domain models.
 
 Introduce abstractions only when they support an implemented feature.
 
@@ -186,35 +177,7 @@ Preferred future concepts include:
 - PlaybackController
 - LibraryRepository
 
-The UI should consume these abstractions rather than interacting directly with Libby, RSS, or filesystem code.
-
----
-
-# Libby Integration
-
-The current hidden Libby playback architecture is the project's greatest technical asset.
-
-Preserve it.
-
-Specifically:
-
-- Maintain the application-scoped persistent WebView.
-- Preserve document-start JavaScript injection.
-- Preserve the WebMessage bridge.
-- Preserve direct `BIF.objects.spool` playback control.
-- Preserve DOM fallbacks where necessary.
-- Do not replace Libby playback with direct media extraction.
-- Do not expose the Libby interface during normal operation.
-
-The Libby WebView should only become visible for:
-
-- initial setup
-- account restoration
-- authentication
-- diagnostics
-- recovery
-
-Libby should become one playback source rather than the application's architecture.
+The UI should consume these abstractions rather than interacting directly with filesystem or MediaStore code.
 
 ---
 
@@ -245,7 +208,6 @@ Never log or expose:
 - passwords
 - cookies
 - authentication tokens
-- Libby setup codes
 - signed URLs
 - authorization headers
 - personally identifying library information
@@ -274,7 +236,7 @@ When possible:
 
 - run `./gradlew assembleDebug`
 - preserve a clean working tree
-- verify Libby playback before handing work back
+- verify local playback before handing work back
 
 ---
 

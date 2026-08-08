@@ -69,16 +69,14 @@ shasum -a 256 app/build/outputs/apk/release/app-release.apk
 
 ## Install
 
-An upgrade installation preserves Bard's app-private Libby session, progress,
-RSS settings, and RSS downloads:
+An upgrade installation preserves Bard's app-private listening progress:
 
 ```sh
 adb install -r app/build/outputs/apk/release/app-release.apk
 ```
 
 A clean installation removes the existing package and all its app-private data.
-Only run this after explicitly accepting that Libby login, progress, RSS
-settings, and RSS downloads will be erased:
+Only run this after explicitly accepting that listening progress will be erased:
 
 ```sh
 adb uninstall com.stan.libbylight
@@ -96,26 +94,20 @@ adb install app/build/outputs/apk/release/app-release.apk
 ## Smoke-test checklist
 
 - Open Settings and confirm Version shows the expected release.
-- Connect Libby with Copy To Another Device and confirm Books populate.
-- Open a Libby loan, play, seek ±15 seconds, scrub, and change speed.
-- Turn the screen off for at least 90 seconds and confirm Libby continues.
-- Pause Libby and confirm the foreground playback notification disappears.
-- Put MP3 and M4B files directly in `Light Phone III/Audiobooks`, scan, and play.
-- Add an HTTP/HTTPS RSS feed, stream an item, and explicitly download it.
+- Open a book, play, seek ±15 seconds, scrub, and change speed.
+- Open a folder book with several chapter files and confirm playback continues
+  across part boundaries.
+- Turn the screen off for at least 90 seconds and confirm playback continues.
+- Pause and confirm the foreground playback notification disappears.
+- Put MP3 and M4B files (single files and folders) in `Audiobooks`, scan, and play.
 - Restart Bard and confirm progress and Now Playing restore without autoplay.
-- Test with networking disabled and confirm cached metadata remains readable.
 
 ## Known limitations
 
-- Local audiobooks support one MP3 or M4B file per book; folders and chapters
-  are not supported.
-- RSS supports one playable MP3/M4B enclosure per item, without feed
-  authentication, chapters, scheduled refresh, or automatic downloads.
-- Libby requires an existing Libby device and an eight-digit Copy To Another
-  Device setup code.
-- Libby depends on Libby's private web-player behavior and may require updates
-  when that client changes.
-- No cover art, ebook reading, playback notifications controls, or cloud sync.
+- Multi-file books play in filename order; chapter metadata is not exposed in
+  the interface.
+- Embedded chapter navigation is not supported.
+- No cover art, ebook reading, media-session controls, or cloud sync.
 
 ## Rollback
 
@@ -136,5 +128,5 @@ Do not create a tag or GitHub Release until explicitly approved. Once approved,
 the corresponding command would be:
 
 ```sh
-gh release create v0.1.0-alpha3 app/build/outputs/apk/release/app-release.apk --prerelease --title "Bard 0.1.0-alpha3" --notes-file RELEASE_NOTES_0.1.0-alpha3.md
+gh release create v0.1.0-alpha3 app/build/outputs/apk/release/app-release.apk --prerelease --title "Bard 0.1.0-alpha3"
 ```

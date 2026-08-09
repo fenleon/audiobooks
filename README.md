@@ -32,7 +32,6 @@ The library, player, and local-book settings on the LightOS emulator (light-on-b
 </p>
 
 <p align="center">
-  <img src="screenshots/notification.png" width="32%" alt="Background playback notification" />
   <img src="screenshots/settings.png" width="32%" alt="Settings" />
   <img src="screenshots/local-books.png" width="32%" alt="Local books" />
 </p>

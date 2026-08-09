@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.stan.libbylight.server"
+    namespace = "com.lightphone.audiobooks.server"
     compileSdk = 36
 
     signingConfigs {
@@ -19,11 +19,11 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.stan.libbylight.server"
+        applicationId = "com.lightphone.audiobooks.server"
         minSdk = 34
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
     }
 
     buildTypes {

@@ -1,4 +1,4 @@
-package com.stan.libbylight.server
+package com.lightphone.audiobooks.server
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -10,15 +10,15 @@ import android.content.Intent
 import android.os.IBinder
 import android.util.Log
 import android.view.KeyEvent
-import com.stan.libbylight.server.player.LocalPlaybackController
-import com.stan.libbylight.server.player.PlaybackMediaSession
+import com.lightphone.audiobooks.server.player.LocalPlaybackController
+import com.lightphone.audiobooks.server.player.PlaybackMediaSession
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * Keeps Bard's process alive while local audiobook playback continues in the background.
+ * Keeps the companion's process alive while local audiobook playback continues in the background.
  * The service does not own playback or issue any player command; LocalPlaybackController does.
  */
 class PlaybackForegroundService : Service() {
@@ -58,7 +58,7 @@ class PlaybackForegroundService : Service() {
     }
 
     companion object {
-        private const val CHANNEL_ID = "bard_playback"
+        private const val CHANNEL_ID = "audiobooks_playback"
         private const val NOTIFICATION_ID = 41
         private const val TAG = "PlaybackService"
         private val running = AtomicBoolean(false)
@@ -66,7 +66,7 @@ class PlaybackForegroundService : Service() {
         val startFailed: StateFlow<Boolean> = mutableStartFailed.asStateFlow()
 
         private fun buildNotification(context: Context): Notification {
-            val openBard = PendingIntent.getActivity(
+            val openApp = PendingIntent.getActivity(
                 context,
                 0,
                 Intent(context, MainActivity::class.java).apply {
@@ -86,7 +86,7 @@ class PlaybackForegroundService : Service() {
                 .setSmallIcon(R.drawable.ic_audio_message_white)
                 .setContentTitle("Audiobooks")
                 .setContentText("Listening to $bookTitle")
-                .setContentIntent(openBard)
+                .setContentIntent(openApp)
                 .setCategory(Notification.CATEGORY_TRANSPORT)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)

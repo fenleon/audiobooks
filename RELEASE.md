@@ -1,9 +1,15 @@
 # Audiobooks — Release
 
-Audiobooks is a standalone Gradle build at the workspace root (`bard/`, module
+Audiobooks is a standalone Gradle build at the workspace root (`audiobooks/`, module
 `:app`), consuming the Light SDK at `../light-sdk` as an included build.
 
-Release identity: package `com.stan.libbylight`, label "Audiobooks".
+Release identity: package `com.lightphone.audiobooks`, label "Audiobooks".
+
+> **2026-08-09 — application ID migration.** The package was renamed from
+> `com.stan.libbylight` to `com.lightphone.audiobooks` as a deliberate breaking
+> change. Android treats it as a new application: previous installs must be
+> uninstalled and will **not** upgrade in place, and listening progress does
+> not carry over.
 
 ## Signing
 
@@ -33,14 +39,14 @@ and never commit the keystore or its passwords.
 ## Build
 
 ```sh
-tools/build --dir bard :app:assembleRelease
+tools/build --dir audiobooks :app:assembleRelease
 ```
 
 Outputs:
 
 ```text
-bard/app/build/outputs/apk/release/app-release.apk
-bard/app/build/outputs/apk/debug/app-debug.apk
+audiobooks/app/build/outputs/apk/release/app-release.apk
+audiobooks/app/build/outputs/apk/debug/app-debug.apk
 ```
 
 Release note: the release variant recompiles more than debug and has OOM-killed
@@ -49,15 +55,16 @@ the emulator during the build if memory is tight.
 
 ## Versioning
 
-`versionCode` / `versionName` are static in `bard/app/build.gradle.kts`.
+`versionCode` / `versionName` are declared in `app/lighttool.toml` for the
+tool; the companion's are in `server/build.gradle.kts` (`defaultConfig`).
 Bump `versionCode` by 1 for every release so devices accept the upgrade.
 
 ## Verify
 
 ```sh
-apksigner verify --verbose --print-certs bard/app/build/outputs/apk/release/app-release.apk
-aapt dump badging bard/app/build/outputs/apk/release/app-release.apk | grep -E "package:|versionCode"
-shasum -a 256 bard/app/build/outputs/apk/release/app-release.apk
+apksigner verify --verbose --print-certs audiobooks/app/build/outputs/apk/release/app-release.apk
+aapt dump badging audiobooks/app/build/outputs/apk/release/app-release.apk | grep -E "package:|versionCode"
+shasum -a 256 audiobooks/app/build/outputs/apk/release/app-release.apk
 ```
 
 ## Install
@@ -66,7 +73,7 @@ An upgrade installation preserves Audiobooks's app-private listening progress (o
 possible with the same signing key):
 
 ```sh
-adb install -r bard/app/build/outputs/apk/release/app-release.apk
+adb install -r audiobooks/app/build/outputs/apk/release/app-release.apk
 ```
 
 A clean installation removes the package and its data — only run this after
@@ -74,14 +81,14 @@ explicitly accepting that progress is erased (also required when the previously
 installed APK used a different key):
 
 ```sh
-adb uninstall com.stan.libbylight
-adb install bard/app/build/outputs/apk/release/app-release.apk
+adb uninstall com.lightphone.audiobooks
+adb install audiobooks/app/build/outputs/apk/release/app-release.apk
 ```
 
 On the emulator, grant the storage permission after a clean install:
 
 ```sh
-adb shell pm grant com.stan.libbylight android.permission.READ_MEDIA_AUDIO
+adb shell pm grant com.lightphone.audiobooks android.permission.READ_MEDIA_AUDIO
 ```
 
 ## Tester installation
@@ -89,7 +96,8 @@ adb shell pm grant com.stan.libbylight android.permission.READ_MEDIA_AUDIO
 1. Enable developer/USB debugging on the Light Phone III.
 2. Connect the phone to a trusted computer; `adb devices` must show it as `device`.
 3. `adb install -r <apk-file>` (uninstall first if a different key was used).
-4. Open Audiobooks from the app list (it is a normal app, not a LightOS toolbox tool).
+4. Open Audiobooks from the LightOS toolbox — a dev-signed tool shows up there
+   once External tools is set to "All tools".
 5. Keep the APK private; this is an early build.
 
 ## Smoke-test checklist
@@ -99,7 +107,7 @@ adb shell pm grant com.stan.libbylight android.permission.READ_MEDIA_AUDIO
 - Open a folder book with several chapter files; confirm playback continues
   across part boundaries and the chapter list can jump to any part.
 - Press play, leave the app, and confirm background listening continues
-  (notification on `bard_playback`, position advances).
+  (notification on `audiobooks_playback`, position advances).
 - Press play and check the lockscreen/system media panel: seek bar, play/pause,
   and the ±15-second actions; try a Bluetooth/headset media key.
 - Pause and confirm the foreground playback notification disappears.
@@ -122,7 +130,7 @@ Reinstall a previously retained APK signed with the same key. Android normally
 blocks a lower version code; for an explicitly approved test-device rollback:
 
 ```sh
-adb install -r -d <previous-signed-bard.apk>
+adb install -r -d <previous-signed.apk>
 ```
 
 If the downgrade is rejected, a clean reinstall is the fallback, but it erases

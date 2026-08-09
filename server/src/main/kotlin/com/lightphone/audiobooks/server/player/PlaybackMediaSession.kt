@@ -1,4 +1,4 @@
-package com.stan.libbylight.server.player
+package com.lightphone.audiobooks.server.player
 
 import android.content.Context
 import android.content.Intent
@@ -11,7 +11,7 @@ import android.os.SystemClock
 import android.view.KeyEvent
 
 /**
- * Owns the platform [MediaSession] so Android surfaces bard as a media app:
+ * Owns the platform [MediaSession] so Android surfaces the companion as a media app:
  * lockscreen/system media controls (with seek bar), transport actions on the
  * foreground notification, and media-key routing. Playback itself stays in
  * [LocalPlaybackController]; this only mirrors its [PlayerState].
@@ -26,7 +26,7 @@ object PlaybackMediaSession {
 
     fun init(context: Context) {
         if (::session.isInitialized) return
-        session = MediaSession(context, "BardPlayback").apply {
+        session = MediaSession(context, "AudiobooksPlayback").apply {
             setCallback(callback, Handler(Looper.getMainLooper()))
             setFlags(
                 MediaSession.FLAG_HANDLES_MEDIA_BUTTONS or
@@ -71,7 +71,7 @@ object PlaybackMediaSession {
 
     /**
      * Forwards an ACTION_MEDIA_BUTTON broadcast (from
-     * [com.stan.libbylight.MediaButtonReceiver]) to the session callback.
+     * [com.lightphone.audiobooks.server.MediaButtonReceiver]) to the session callback.
      * The platform [MediaSession] has no `onMediaButtonEvent`, so keycodes are
      * dispatched straight to the callback (same result, no system round-trip).
      */

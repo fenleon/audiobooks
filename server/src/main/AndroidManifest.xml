@@ -33,6 +33,24 @@
             </intent-filter>
         </activity>
 
+        <!-- Hosts the system media-delete consent dialog; started by the tool
+             (the companion can't launch activities from the background). -->
+        <activity
+            android:name=".DeleteConsentActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:screenOrientation="portrait"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+
+        <!-- Opens the system Bluetooth settings; started by the tool from the
+             player's bottom bar. -->
+        <activity
+            android:name=".BluetoothSettingsActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <service
             android:name=".PlaybackForegroundService"
             android:exported="false"

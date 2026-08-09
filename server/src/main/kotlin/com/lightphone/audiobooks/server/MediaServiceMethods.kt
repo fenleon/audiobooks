@@ -1,0 +1,268 @@
+package com.lightphone.audiobooks.server
+
+import android.content.ComponentName
+import android.net.Uri
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.provider.MediaStore
+import com.lightphone.audiobooks.server.library.AudiobookProgressStore
+import com.lightphone.audiobooks.server.library.LocalBookRepository
+import com.lightphone.audiobooks.server.player.LocalPlaybackController
+import com.thelightphone.sdk.shared.LightResult
+import com.thelightphone.sdk.shared.LightServiceMethod
+import java.util.concurrent.CountDownLatch
+import kotlinx.coroutines.runBlocking
+
+/**
+ * Implements the Audiobooks media methods on the companion's LightSdkService.
+ * These are the server-side half of the tool model: the tool is a thin UI that
+ * calls these over the SDK binder; everything privileged lives here.
+ *
+ * The resolver runs on a binder thread; playback commands must run on the main
+ * thread (ExoPlayer requires it), so every call is marshalled through
+ * [onMain].
+ */
+object MediaServiceMethods {
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    fun dispatch(methodId: String, payload: String?): LightResult<String> = onMain {
+        when (methodId) {
+            LightServiceMethod.GetBooks.id -> booksResult()
+
+            LightServiceMethod.ScanLibrary.id -> {
+                // Await the scan so the tool's scanning indicator tracks the real
+                // duration and the returned list is fresh. The companion's main
+                // thread blocks ~1s here; the player (whose state polling also
+                // uses it) is not open while scanning the library.
+                runBlocking { LocalBookRepository.scan() }
+                booksResult()
+            }
+
+            LightServiceMethod.DeleteBook.id -> {
+                val request = LightServiceMethod.DeleteBook.decodeRequest(payload!!)
+                deleteBook(request.bookId)
+            }
+
+            LightServiceMethod.SeekToPart.id -> {
+                val request = LightServiceMethod.SeekToPart.decodeRequest(payload!!)
+                LocalPlaybackController.seekToPart(request.partIndex)
+                LightResult.Success(LightServiceMethod.SeekToPart.encodeResponse(Unit))
+            }
+
+            LightServiceMethod.GetAutoPlayNext.id -> {
+                val response = LightServiceMethod.GetAutoPlayNext.Response(
+                    enabled = PlaybackSettingsStore.autoPlayNext,
+                )
+                LightResult.Success(LightServiceMethod.GetAutoPlayNext.encodeResponse(response))
+            }
+
+            LightServiceMethod.SetAutoPlayNext.id -> {
+                val request = LightServiceMethod.SetAutoPlayNext.decodeRequest(payload!!)
+                PlaybackSettingsStore.autoPlayNext = request.enabled
+                LightResult.Success(LightServiceMethod.SetAutoPlayNext.encodeResponse(Unit))
+            }
+
+            LightServiceMethod.PlayBook.id -> {
+                val request = LightServiceMethod.PlayBook.decodeRequest(payload!!)
+                openBook(request.bookId, request.partIndex, request.positionMs, autoPlay = true)
+            }
+
+            LightServiceMethod.OpenBook.id -> {
+                val request = LightServiceMethod.OpenBook.decodeRequest(payload!!)
+                openBook(request.bookId, request.partIndex, request.positionMs, autoPlay = false)
+            }
+
+            LightServiceMethod.PausePlayback.id -> {
+                LocalPlaybackController.pause()
+                LightResult.Success(LightServiceMethod.PausePlayback.encodeResponse(Unit))
+            }
+
+            LightServiceMethod.SeekTo.id -> {
+                val request = LightServiceMethod.SeekTo.decodeRequest(payload!!)
+                LocalPlaybackController.seekTo(request.positionMs)
+                LightResult.Success(LightServiceMethod.SeekTo.encodeResponse(Unit))
+            }
+
+            LightServiceMethod.SetPlaybackSpeed.id -> {
+                val request = LightServiceMethod.SetPlaybackSpeed.decodeRequest(payload!!)
+                LocalPlaybackController.setSpeed(request.speed.toDouble())
+                LightResult.Success(LightServiceMethod.SetPlaybackSpeed.encodeResponse(Unit))
+            }
+
+            LightServiceMethod.GetPlaybackState.id -> {
+                val state = LocalPlaybackController.state.value
+                val response = LightServiceMethod.GetPlaybackState.Response(
+                    bookId = state.title.takeIf { it.isNotBlank() && it != "Audiobook" }
+                        ?.let { activeBookId() },
+                    title = state.title,
+                    author = state.chapter,
+                    partIndex = state.currentPartIndex,
+                    partCount = state.partCount,
+                    partTitle = state.partTitle,
+                    positionMs = (state.positionSeconds * 1000).toLong(),
+                    durationMs = (state.durationSeconds * 1000).toLong(),
+                    playing = state.isPlaying,
+                    speed = state.playbackSpeed.toFloat(),
+                )
+                LightResult.Success(LightServiceMethod.GetPlaybackState.encodeResponse(response))
+            }
+
+            else -> LightResult.Error(
+                LightResult.ErrorCode.Unknown,
+                "unknown method: $methodId",
+            )
+        }
+    }
+
+    /** Loads a book on the player; [autoPlay] distinguishes open-paused from open-and-play. */
+    private fun openBook(
+        bookId: String,
+        partIndex: Int,
+        positionMs: Long,
+        autoPlay: Boolean,
+    ): LightResult<String> {
+        val book = LocalBookRepository.books.value.firstOrNull { it.id == bookId }
+            ?: return LightResult.Error(
+                LightResult.ErrorCode.Unknown,
+                "book not found: $bookId",
+            )
+        LocalPlaybackController.open(book, autoPlay = autoPlay)
+        if (partIndex > 0) {
+            LocalPlaybackController.seekToPart(partIndex)
+        }
+        if (positionMs > 0) {
+            LocalPlaybackController.seekTo(positionMs)
+        }
+        return LightResult.Success(LightServiceMethod.PlayBook.encodeResponse(Unit))
+    }
+
+    /**
+     * Deletes a book's files. The companion only owns files it created itself,
+     * so on Android 11+ deleting media placed via MTP/adb requires the system
+     * consent dialog. A direct delete is attempted first; when that fails, the
+     * consent request is registered for [DeleteConsentActivity] and the tool is
+     * told a decision is pending — the tool then launches the activity (it is
+     * the foreground process; the companion cannot start activities from the
+     * background), which shows the system dialog and completes the deletion.
+     */
+    private fun deleteBook(bookId: String): LightResult<String> {
+        val book = LocalBookRepository.books.value.firstOrNull { it.id == bookId }
+            ?: return LightResult.Error(
+                LightResult.ErrorCode.Unknown,
+                "book not found: $bookId",
+            )
+        if (LocalPlaybackController.isBookLoaded(bookId)) {
+            LocalPlaybackController.close()
+        }
+        val deleted = runBlocking { LocalBookRepository.deleteBook(book) }
+        if (deleted) {
+            AudiobookProgressStore.clear(book.source, book.id)
+            return LightResult.Success(
+                LightServiceMethod.DeleteBook.encodeResponse(
+                    LightServiceMethod.DeleteBook.Response(deleted = true),
+                ),
+            )
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val uris = book.parts.map { Uri.parse(it.playbackReference) }
+                .ifEmpty { listOf(Uri.parse(book.playbackReference)) }
+            val consent = runCatching {
+                MediaStore.createDeleteRequest(
+                    LocalBookRepository.applicationContext.contentResolver,
+                    uris,
+                )
+            }.getOrNull()
+            if (consent != null) {
+                DeleteConsentActivity.register(bookId, consent)
+                return LightResult.Success(
+                    LightServiceMethod.DeleteBook.encodeResponse(
+                        LightServiceMethod.DeleteBook.Response(
+                            consentPending = true,
+                            consentComponent = ComponentName(
+                                LocalBookRepository.applicationContext,
+                                DeleteConsentActivity::class.java,
+                            ).flattenToString(),
+                        ),
+                    ),
+                )
+            }
+        }
+        return LightResult.Success(
+            LightServiceMethod.DeleteBook.encodeResponse(
+                LightServiceMethod.DeleteBook.Response(),
+            ),
+        )
+    }
+
+    /**
+     * Finalizes a deletion after the consent dialog was answered. On Android
+     * 13+ the dialog's ALLOW deletes the files itself; on 11-12 it grants the
+     * companion delete access. Either way the actual delete is attempted (a
+     * no-op when the provider already removed the files) and the library is
+     * rescanned so the tool's next read reflects the true library. Called by
+     * [DeleteConsentActivity] when the user confirms.
+     */
+    fun completeDelete(bookId: String) {
+        val book = LocalBookRepository.books.value.firstOrNull { it.id == bookId } ?: return
+        if (LocalPlaybackController.isBookLoaded(bookId)) {
+            LocalPlaybackController.close()
+        }
+        runBlocking { LocalBookRepository.deleteBook(book) }
+        runBlocking { LocalBookRepository.scan() }
+        AudiobookProgressStore.clear(book.source, book.id)
+    }
+
+    /** Runs [block] on the main thread, blocking the caller until it completes. */
+    private fun <T> onMain(block: () -> T): T {
+        if (Looper.myLooper() == Looper.getMainLooper()) return block()
+        var result: T? = null
+        var failure: Throwable? = null
+        val latch = CountDownLatch(1)
+        mainHandler.post {
+            try {
+                result = block()
+            } catch (t: Throwable) {
+                failure = t
+            } finally {
+                latch.countDown()
+            }
+        }
+        latch.await()
+        failure?.let { throw it }
+        @Suppress("UNCHECKED_CAST")
+        return result as T
+    }
+
+    private fun booksResult(): LightResult<String> {
+        val books = LocalBookRepository.books.value.map { book ->
+            val stored = AudiobookProgressStore.read(book.source, book.id)
+            LightServiceMethod.GetBooks.Book(
+                id = book.id,
+                title = book.title,
+                author = book.author,
+                durationMs = book.durationMilliseconds,
+                progressMs = stored.positionMilliseconds,
+                partCount = book.parts.size.coerceAtLeast(1),
+                parts = book.parts.map { part ->
+                    LightServiceMethod.GetBooks.Part(
+                        title = part.title,
+                        durationMs = part.durationMilliseconds,
+                    )
+                },
+            )
+        }
+        return LightResult.Success(
+            LightServiceMethod.GetBooks.encodeResponse(
+                LightServiceMethod.GetBooks.Response(books),
+            ),
+        )
+    }
+
+    private fun activeBookId(): String? {
+        val state = LocalPlaybackController.state.value
+        val title = state.title.takeIf { it.isNotBlank() && it != "Audiobook" } ?: return null
+        return LocalBookRepository.books.value.firstOrNull { it.title == title }?.id
+    }
+}

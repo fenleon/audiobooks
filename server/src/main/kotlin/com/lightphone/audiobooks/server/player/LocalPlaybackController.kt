@@ -1,12 +1,13 @@
-package com.stan.libbylight.server.player
+package com.lightphone.audiobooks.server.player
 
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import com.stan.libbylight.server.PlaybackForegroundService
-import com.stan.libbylight.server.library.Audiobook
-import com.stan.libbylight.server.library.AudiobookProgressStore
+import com.lightphone.audiobooks.server.PlaybackForegroundService
+import com.lightphone.audiobooks.server.PlaybackSettingsStore
+import com.lightphone.audiobooks.server.library.Audiobook
+import com.lightphone.audiobooks.server.library.AudiobookProgressStore
 import com.thelightphone.sdk.audio.LightAudioItem
 import com.thelightphone.sdk.audio.LightAudioPlayer
 import com.thelightphone.sdk.audio.LightAudioSource
@@ -39,6 +40,7 @@ object LocalPlaybackController {
     private var wasPlaying = false
     private var pendingSeekMilliseconds: Long? = null
     private var silentFailureStreak = 0
+    private var lastPartIndex = -1
 
     val state: StateFlow<PlayerState> = mutableState.asStateFlow()
 
@@ -69,7 +71,7 @@ object LocalPlaybackController {
         player.stop()
         activeBook = book
         val saved = AudiobookProgressStore.read(book.source, book.id)
-        speed = saved.playbackSpeed.coerceIn(1f, 2f)
+        speed = saved.playbackSpeed.coerceIn(0.5f, 2f)
         val references = book.parts.map { it.playbackReference }
             .ifEmpty { listOf(book.playbackReference) }
         partDurations = LongArray(references.size) { index ->
@@ -113,6 +115,7 @@ object LocalPlaybackController {
             } else {
                 null
             }
+            lastPartIndex = startPart
         }.onFailure { error ->
             Log.w(TAG, "queue set failed: ${error.message}")
             PlaybackForegroundService.update(appContext, false)
@@ -151,6 +154,9 @@ object LocalPlaybackController {
         persistProgress()
     }
 
+    /** Whether the given book is the one currently loaded on the player. */
+    fun isBookLoaded(bookId: String): Boolean = activeBook?.id == bookId
+
     fun seekBy(deltaMilliseconds: Long) {
         seekTo(currentGlobalPosition() + deltaMilliseconds)
     }
@@ -168,6 +174,9 @@ object LocalPlaybackController {
         }
         // Applied once the target item's duration resolves.
         pendingSeekMilliseconds = part.positionMilliseconds
+        // A manual seek is not a natural part boundary; keep the boundary
+        // tracker in sync so it only fires on real queue advancement.
+        lastPartIndex = part.index
         mutableState.value = mutableState.value.copy(
             positionSeconds = target / 1000.0,
             currentPartIndex = part.index,
@@ -182,7 +191,7 @@ object LocalPlaybackController {
     }
 
     fun setSpeed(value: Double) {
-        speed = value.toFloat().coerceIn(1f, 2f)
+        speed = value.toFloat().coerceIn(0.5f, 2f)
         player.speed = speed
         mutableState.value = mutableState.value.copy(playbackSpeed = speed.toDouble())
         persistProgress()
@@ -214,6 +223,7 @@ object LocalPlaybackController {
         activeBook = null
         partDurations = LongArray(0)
         pendingSeekMilliseconds = null
+        lastPartIndex = -1
         mutableState.value = PlayerState(
             diagnostic = "No audiobook loaded",
             readiness = PlayerReadiness.Unavailable,
@@ -257,6 +267,16 @@ object LocalPlaybackController {
                 player.seekTo(pendingSeekMilliseconds!!)
                 pendingSeekMilliseconds = null
             }
+            // With "Auto-Play: next chapter" off, stop when a part ends instead
+            // of flowing into the next one. The queue advances one index past
+            // the boundary, so pause right at the new part's start.
+            if (index > lastPartIndex && lastPartIndex >= 0 &&
+                player.isPlaying.value && !PlaybackSettingsStore.autoPlayNext
+            ) {
+                player.pause()
+                PlaybackForegroundService.update(appContext, false)
+            }
+            lastPartIndex = index
             updateState()
             val playing = player.isPlaying.value
             if (playing && System.currentTimeMillis() - lastSavedAt >= PROGRESS_SAVE_INTERVAL_MILLISECONDS) {

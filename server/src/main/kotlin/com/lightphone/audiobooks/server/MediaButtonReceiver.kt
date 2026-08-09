@@ -1,11 +1,11 @@
-package com.stan.libbylight.server
+package com.lightphone.audiobooks.server
 
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.view.KeyEvent
-import com.stan.libbylight.server.player.PlaybackMediaSession
+import com.lightphone.audiobooks.server.player.PlaybackMediaSession
 
 /**
  * Receives ACTION_MEDIA_BUTTON broadcasts — from the notification's transport

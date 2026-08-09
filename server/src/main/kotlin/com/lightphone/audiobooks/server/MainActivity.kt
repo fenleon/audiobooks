@@ -1,4 +1,4 @@
-package com.stan.libbylight.server
+package com.lightphone.audiobooks.server
 
 import android.Manifest
 import android.content.pm.PackageManager
@@ -16,7 +16,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.stan.libbylight.server.library.LocalBookRepository
+import com.lightphone.audiobooks.server.library.LocalBookRepository
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTheme

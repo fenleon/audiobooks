@@ -15,19 +15,22 @@ Audiobooks is currently in **alpha**. While it is already suitable for daily use
 > **Current Version:** 0.1.0 (versionCode 11)
 
 > **About the name:** the app is called *Audiobooks* — a plain, descriptive
-> name in the Light Phone tool-naming style. It was formerly known as *Bard*;
-> the package and internal identifiers keep the historical heritage so the app
-> identity and upgrade path never change.
+> name in the Light Phone tool-naming style. Application IDs:
+> `com.lightphone.audiobooks` (tool) and `com.lightphone.audiobooks.server`
+> (companion).
 
 ---
 
 # Screenshots
 
-The library and player on the LightOS emulator (light-on-black, like the device):
+The library, player, and settings on the LightOS emulator (light-on-black, like the device):
 
 <p align="center">
   <img src="screenshots/library.png" width="32%" alt="Library" />
+  <img src="screenshots/edit.png" width="32%" alt="Edit mode" />
   <img src="screenshots/player.png" width="32%" alt="Player" />
+  <img src="screenshots/settings.png" width="32%" alt="Settings" />
+  <img src="screenshots/speed.png" width="32%" alt="Playback speed" />
 </p>
 
 ---

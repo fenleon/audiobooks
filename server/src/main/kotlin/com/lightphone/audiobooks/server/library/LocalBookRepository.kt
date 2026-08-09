@@ -1,4 +1,4 @@
-package com.stan.libbylight.server.library
+package com.lightphone.audiobooks.server.library
 
 import android.Manifest
 import android.content.ContentUris
@@ -52,6 +52,10 @@ object LocalBookRepository {
     fun init(context: Context) {
         appContext = context.applicationContext
     }
+
+    /** Application context for launching the system delete-consent flow. */
+    val applicationContext: Context
+        get() = appContext
 
     fun requiredPermission(): String = if (Build.VERSION.SDK_INT >= 33) {
         Manifest.permission.READ_MEDIA_AUDIO
@@ -107,7 +111,7 @@ object LocalBookRepository {
     private suspend fun scanFresh(generation: Int): LocalScanResult = withContext(Dispatchers.IO) {
         if (!hasReadPermission()) return@withContext LocalScanResult.PermissionRequired
 
-        // MediaStore does not represent empty directories. This existence-only probe lets Bard
+        // MediaStore does not represent empty directories. This existence-only probe lets the companion
         // distinguish a missing top-level folder while all file discovery remains in MediaStore.
         val rootDirectory = File(
             Environment.getExternalStorageDirectory(),
@@ -275,7 +279,12 @@ object LocalBookRepository {
                     accepted[stableId] = Audiobook(
                         id = stableId,
                         source = AudiobookSource.Local,
-                        title = folderPath.substringAfterLast('/'),
+                        // The embedded album tag carries the actual book title
+                        // (chapter files title themselves per chapter); fall back
+                        // to the folder name when it's absent.
+                        title = ordered.firstNotNullOfOrNull {
+                            it.embedded.album.takeIf(String::isNotBlank)
+                        } ?: folderPath.substringAfterLast('/'),
                         author = ordered.firstNotNullOfOrNull {
                             it.embedded.author.takeIf(String::isNotBlank)
                         }.orEmpty(),
@@ -293,7 +302,9 @@ object LocalBookRepository {
                             AudiobookPart(
                                 playbackReference = it.uri.toString(),
                                 durationMilliseconds = it.embedded.durationMilliseconds,
-                                title = it.displayName.removeSupportedSuffix(),
+                                title = it.embedded.title.ifBlank {
+                                    it.displayName.removeSupportedSuffix()
+                                },
                             )
                         },
                     )
@@ -384,10 +395,11 @@ object LocalBookRepository {
             retriever.setDataSource(appContext, uri)
             val title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE).orEmpty().trim()
             val author = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST).orEmpty().trim()
+            val album = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM).orEmpty().trim()
             val duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
                 ?.toLongOrNull() ?: 0L
             Log.d(TAG, "metadata available=${title.isNotBlank() || author.isNotBlank()}")
-            EmbeddedMetadata(title, author, duration)
+            EmbeddedMetadata(title, author, album, duration)
         } catch (_: Exception) {
             EmbeddedMetadata()
         } finally {
@@ -443,6 +455,7 @@ object LocalBookRepository {
     private data class EmbeddedMetadata(
         val title: String = "",
         val author: String = "",
+        val album: String = "",
         val durationMilliseconds: Long = 0,
     )
 }

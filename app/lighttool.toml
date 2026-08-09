@@ -1,11 +1,11 @@
 [tool]
-id = "com.stan.libbylight"
+id = "com.lightphone.audiobooks"
 label = "Audiobooks"
-versionCode = 11
-versionName = "0.1.0"
+versionCode = 12
+versionName = "0.2.0"
 permissions = []
 # The tool is a thin UI; the companion (:server) hosts the SDK service, the
 # /sdcard/Audiobooks scan, and playback. Point at com.lightos on a real LP3
 # once Light ships the media methods there.
-serverPackage = "com.stan.libbylight.server"
+serverPackage = "com.lightphone.audiobooks.server"
 orientation = "portrait"

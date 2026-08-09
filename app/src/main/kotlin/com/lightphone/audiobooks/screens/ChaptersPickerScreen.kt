@@ -1,4 +1,4 @@
-package com.stan.libbylight.screens
+package com.lightphone.audiobooks.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
@@ -13,8 +13,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
-import com.stan.libbylight.MediaClient
-import com.stan.libbylight.formatTime
+import com.lightphone.audiobooks.MediaClient
+import com.lightphone.audiobooks.formatTime
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
@@ -36,26 +36,27 @@ import kotlinx.coroutines.launch
 
 class ChaptersPickerViewModel(
     private val book: LightServiceMethod.GetBooks.Book,
-) : LightViewModel<Unit>() {
+) : LightViewModel<Int>() {
 
     val currentPart = MutableStateFlow(0)
 
-    override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
+    override fun onScreenShow(screen: SimpleLightScreen<Int>) {
         super.onScreenShow(screen)
         viewModelScope.launch {
             currentPart.value = MediaClient.playbackState()?.partIndex ?: 0
         }
     }
-
-    fun jumpToPart(index: Int) {
-        viewModelScope.launch { MediaClient.play(book.id, partIndex = index) }
-    }
 }
 
+/**
+ * Chapter list for a book. The tapped chapter index is returned as the
+ * navigation result — the player applies it (preserving play/pause), so the
+ * switch is never dropped by this screen's teardown.
+ */
 class ChaptersPickerScreen(
     sealedActivity: SealedLightActivity,
     private val book: LightServiceMethod.GetBooks.Book,
-) : LightScreen<Unit, ChaptersPickerViewModel>(sealedActivity) {
+) : LightScreen<Int, ChaptersPickerViewModel>(sealedActivity) {
 
     override val viewModelClass: Class<ChaptersPickerViewModel>
         get() = ChaptersPickerViewModel::class.java
@@ -86,10 +87,7 @@ class ChaptersPickerScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .lightClickable {
-                                    viewModel.jumpToPart(index)
-                                    goBack()
-                                }
+                                .lightClickable { goBack(index) }
                                 .padding(horizontal = 24.dp, vertical = 14.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {

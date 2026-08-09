@@ -1,4 +1,4 @@
-package com.stan.libbylight.screens
+package com.lightphone.audiobooks.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
@@ -11,8 +11,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
-import com.stan.libbylight.MediaClient
-import com.stan.libbylight.formatSpeed
+import com.lightphone.audiobooks.MediaClient
+import com.lightphone.audiobooks.formatSpeed
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
@@ -31,28 +31,26 @@ import com.thelightphone.sdk.ui.lightClickable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 
-class SpeedPickerViewModel : LightViewModel<Unit>() {
+class SpeedPickerViewModel : LightViewModel<Float>() {
 
-    val speeds = listOf(1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
+    val speeds = listOf(0.5f, 1.0f, 1.25f, 1.5f, 2.0f)
     val current = MutableStateFlow(1.0f)
 
-    override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
+    override fun onScreenShow(screen: SimpleLightScreen<Float>) {
         super.onScreenShow(screen)
         viewModelScope.launch {
             current.value = MediaClient.playbackState()?.speed ?: 1.0f
         }
     }
-
-    fun select(speed: Float) {
-        viewModelScope.launch {
-            MediaClient.setSpeed(speed)
-            current.value = speed
-        }
-    }
 }
 
+/**
+ * Speed selection screen. The chosen speed is returned as the navigation
+ * result — the player applies it (its viewmodel outlives this screen), so a
+ * quick selection is never dropped by this screen's teardown.
+ */
 class SpeedPickerScreen(sealedActivity: SealedLightActivity) :
-    LightScreen<Unit, SpeedPickerViewModel>(sealedActivity) {
+    LightScreen<Float, SpeedPickerViewModel>(sealedActivity) {
 
     override val viewModelClass: Class<SpeedPickerViewModel>
         get() = SpeedPickerViewModel::class.java
@@ -76,7 +74,7 @@ class SpeedPickerScreen(sealedActivity: SealedLightActivity) :
                         onClick = { goBack() },
                         contentDescription = "Back",
                     ),
-                    center = LightTopBarCenter.Text("Speed"),
+                    center = LightTopBarCenter.Text("Playback Speed"),
                 )
                 LightScrollView {
                     viewModel.speeds.forEach { speed ->
@@ -86,10 +84,7 @@ class SpeedPickerScreen(sealedActivity: SealedLightActivity) :
                             lighten = speed != current,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .lightClickable {
-                                    viewModel.select(speed)
-                                    goBack()
-                                }
+                                .lightClickable { goBack(speed) }
                                 .padding(horizontal = 24.dp, vertical = 16.dp),
                         )
                     }

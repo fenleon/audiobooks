@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-Bard uses and adapts components and resources from the
+Audiobooks uses and adapts components and resources from the
 [Light SDK](https://github.com/lightphone/light-sdk), including Light-style UI
 primitives and icons. The Light SDK's copyright notice and MIT License are
 reproduced exactly below.
@@ -31,7 +31,7 @@ SOFTWARE.
 
 ## Other dependencies
 
-Bard also depends on AndroidX, Jetpack Compose, Kotlin, and Kotlin Coroutines
+Audiobooks also depends on AndroidX, Jetpack Compose, Kotlin, and Kotlin Coroutines
 components distributed under their respective open-source licenses. Those
 projects retain their own copyright and licensing terms; this notice does not
 replace them.

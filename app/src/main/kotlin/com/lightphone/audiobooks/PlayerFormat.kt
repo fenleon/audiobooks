@@ -1,4 +1,4 @@
-package com.stan.libbylight
+package com.lightphone.audiobooks
 
 /** Formats a duration in milliseconds as m:ss or h:mm:ss. */
 fun formatTime(milliseconds: Long): String {
@@ -13,8 +13,8 @@ fun formatTime(milliseconds: Long): String {
     }
 }
 
-/** Formats a speed as "1.0×", "1.5×", ... */
-fun formatSpeed(speed: Float): String = "${speed.toString().trimEnd('0').trimEnd('.')}×"
+/** Formats a speed as "1x", "1.25x", ... (lowercase x). */
+fun formatSpeed(speed: Float): String = "${speed.toString().trimEnd('0').trimEnd('.')}x"
 
 /** "Chapter 3 of 7" — only shown for multi-part (folder) books. */
 fun chapterLabel(partIndex: Int, partCount: Int): String =

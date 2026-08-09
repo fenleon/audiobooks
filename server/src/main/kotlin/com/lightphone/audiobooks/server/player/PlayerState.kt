@@ -1,4 +1,4 @@
-package com.stan.libbylight.server.player
+package com.lightphone.audiobooks.server.player
 
 enum class PlayerReadiness {
     Preparing,

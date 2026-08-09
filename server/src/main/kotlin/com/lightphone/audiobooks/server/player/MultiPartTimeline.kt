@@ -1,4 +1,4 @@
-package com.stan.libbylight.server.player
+package com.lightphone.audiobooks.server.player
 
 internal data class PartPosition(
     val index: Int,

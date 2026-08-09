@@ -1,12 +1,12 @@
-package com.stan.libbylight.server
+package com.lightphone.audiobooks.server
 
 import android.app.Application
 import android.content.Context
 import android.content.pm.PackageManager
 import android.content.pm.Signature
-import com.stan.libbylight.server.library.AudiobookProgressStore
-import com.stan.libbylight.server.library.LocalBookRepository
-import com.stan.libbylight.server.player.LocalPlaybackController
+import com.lightphone.audiobooks.server.library.AudiobookProgressStore
+import com.lightphone.audiobooks.server.library.LocalBookRepository
+import com.lightphone.audiobooks.server.player.LocalPlaybackController
 import com.thelightphone.sdk.server.ClientCertType
 import com.thelightphone.sdk.server.ClientFilterLevel
 import com.thelightphone.sdk.server.DefaultLightSdkServerSettings
@@ -34,8 +34,8 @@ class ServerApplication : Application() {
         super.onCreate()
         AudiobookProgressStore.init(this)
         LocalBookRepository.init(this)
+        PlaybackSettingsStore.init(this)
         LocalPlaybackController.init(this)
-        MediaServiceMethods.init(applicationScope)
 
         with(LightSdkServer) {
             defaultClientFilterLevel = ClientFilterLevel.AllowLightSignedApks

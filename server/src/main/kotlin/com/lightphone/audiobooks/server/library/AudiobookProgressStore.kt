@@ -1,7 +1,7 @@
-package com.stan.libbylight.server.library
+package com.lightphone.audiobooks.server.library
 
 import android.content.Context
-import com.stan.libbylight.server.player.PlayerState
+import com.lightphone.audiobooks.server.player.PlayerState
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -118,6 +118,34 @@ object AudiobookProgressStore {
             .remove("last.author")
             .commit()
         mutableActiveAudiobook.value = null
+    }
+
+    /** Forgets all stored progress/metadata for a book (used when it is deleted). */
+    fun clear(source: AudiobookSource, id: String) {
+        clearLastActiveIfMatches(source, id)
+        val key = qualifiedId(source, id)
+        val editor = preferences().edit()
+            .remove("$key.position")
+            .remove("$key.duration")
+            .remove("$key.speed")
+            .remove("$key.completed")
+            .remove("$key.lastPlayed")
+            .remove("$key.updated")
+            .remove("$key.reference")
+            .remove("$key.title")
+            .remove("$key.author")
+            .remove("$key.progressPercent")
+            .remove("$key.dueText")
+        // Legacy key layout used pre-qualified-id migration for local books.
+        if (source == AudiobookSource.Local) {
+            editor
+                .remove("$id.position")
+                .remove("$id.duration")
+                .remove("$id.speed")
+                .remove("$id.completed")
+                .remove("$id.updated")
+        }
+        editor.commit()
     }
 
     fun saveMetadata(book: Audiobook) {

@@ -108,7 +108,7 @@ The UI is built on the Light SDK's design system (`sdk:ui`) and playback runs on
 
 - JDK 17 or 21 (the workspace provides both under `tools/`)
 - Android SDK (API 36)
-- A sibling checkout of the Light SDK at `../light-sdk` (consumed as an included build)
+- A sibling checkout of the Light SDK at `../light-sdk` (consumed as an included build). The local checkout carries a few additive Audiobooks patches (media methods, the tool→companion activity launcher, token sync — documented in the workspace `AGENTS.md`); the patched tree is mirrored at **https://github.com/fenleon/light-sdk** (fork of `lightphone/light-sdk`, `origin` there), with `upstream` pointing at the original.
 
 ## Build
 

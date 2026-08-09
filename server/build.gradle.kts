@@ -2,12 +2,10 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
-    alias(libs.plugins.kotlin.serialization)
-    alias(libs.plugins.ksp)
-    alias(libs.plugins.light.sdk)
 }
 
 android {
+    namespace = "com.stan.libbylight.server"
     compileSdk = 36
 
     signingConfigs {
@@ -21,20 +19,20 @@ android {
     }
 
     defaultConfig {
+        applicationId = "com.stan.libbylight.server"
         minSdk = 34
         targetSdk = 36
-
-        // Consumed by the plugin's generated manifest (SDK_VERSION metadata).
-        manifestPlaceholders["sdkVersion"] = property("sdkVersion") as String
+        versionCode = 1
+        versionName = "0.1.0"
     }
 
     buildTypes {
-        getByName("debug") {
-            signingConfig = signingConfigs.getByName("lightsdkDev")
-        }
         getByName("release") {
             isMinifyEnabled = false
             isShrinkResources = false
+            signingConfig = signingConfigs.getByName("lightsdkDev")
+        }
+        getByName("debug") {
             signingConfig = signingConfigs.getByName("lightsdkDev")
         }
     }
@@ -42,6 +40,10 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 }
 
@@ -53,6 +55,9 @@ kotlin {
 
 dependencies {
     // SDK modules come from the included ../light-sdk build (see settings.gradle.kts).
-    implementation(libs.sdk.client)   // LightScreen, LightActivity, callRemoteServiceMethod
+    implementation(libs.sdk.server)   // LightSdkServer + LightSdkService (the binder)
+    implementation(libs.sdk.client)   // LightAudioPlayer
+    implementation(libs.sdk.ui)       // Light design system for the status screen
+    implementation(libs.compose.activity)
     implementation(libs.kotlinx.coroutines)
 }

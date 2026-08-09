@@ -23,17 +23,11 @@ Audiobooks is currently in **alpha**. While it is already suitable for daily use
 
 # Screenshots
 
-The library, player, and local-book settings on the LightOS emulator (light-on-black, like the device):
+The library and player on the LightOS emulator (light-on-black, like the device):
 
 <p align="center">
   <img src="screenshots/library.png" width="32%" alt="Library" />
   <img src="screenshots/player.png" width="32%" alt="Player" />
-  <img src="screenshots/now-playing.png" width="32%" alt="Now playing" />
-</p>
-
-<p align="center">
-  <img src="screenshots/settings.png" width="32%" alt="Settings" />
-  <img src="screenshots/local-books.png" width="32%" alt="Local books" />
 </p>
 
 ---
@@ -76,11 +70,7 @@ Audiobooks scans the shared `Audiobooks` folder at any depth. Individual .mp3 an
 
 Files are played in alphabetical order, so numbering them (01, 02, 03, …) is recommended.
 
-4. In Audiobooks, open:
-
-```
-Settings → Local Books → Scan for Books
-```
+4. In Audiobooks, open the app — the library lists every book found in the folder (tap the settings icon in the library's top bar to rescan).
 
 Android may request permission to read your audio library. Audiobooks does **not** request broad "All Files" storage access.
 
@@ -105,7 +95,7 @@ Audiobooks is a native Android application written in Kotlin using Jetpack Compo
 
 Its architecture is intentionally simple, with separate components responsible for local audiobook discovery, playback, progress persistence, and the interface.
 
-The UI is built on the Light SDK's design system (`sdk:ui`) and playback runs on the SDK's `LightAudioPlayer` (ExoPlayer). Audiobooks is a standalone Gradle project that consumes the SDK as an included build — see `settings.gradle.kts`. It is a plain Android app rather than a LightOS "tool" because it needs a playback foreground service and direct storage access, which the SDK's tool plugin forbids.
+The UI is built on the Light SDK's design system (`sdk:ui`) and playback runs on the SDK's `LightAudioPlayer` (ExoPlayer). Audiobooks is a standalone Gradle project that consumes the SDK as an included build — see `settings.gradle.kts`. It is a **real LightOS tool**: the `:app` module is built with the SDK's tool plugin (launched from the LightOS toolbox), and the `:server` module is a plain companion app that hosts the SDK service, the local library scan, and the playback foreground service — the privileged work the tool plugin forbids in the tool itself. The tool is a thin UI over the companion, so background playback survives the tool closing.
 
 ---
 
@@ -123,13 +113,13 @@ From the workspace root, through the memory-guarded wrapper:
 
 ```bash
 source tools/env.sh
-tools/build --dir bard :app:assembleDebug
+tools/build --dir audiobooks :app:assembleDebug :server:assembleDebug
 ```
 
 or directly in this directory:
 
 ```bash
-./gradlew :app:assembleDebug
+./gradlew :app:assembleDebug :server:assembleDebug
 ```
 
 Release signing instructions are available in `RELEASE.md`.

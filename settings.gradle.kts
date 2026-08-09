@@ -23,14 +23,19 @@ dependencyResolutionManagement {
 rootProject.name = "audiobooks"
 
 include(":app")
+include(":server")
 
-// Audiobooks is a plain Android app (not a light-sdk "tool"): it needs a user
-// manifest, a playback foreground service, and Context access, which the
-// light-sdk tool plugin forbids. It still builds on the SDK's design system
-// and client library, so the SDK is consumed here as an included build.
+// Audiobooks is a two-part project: `:app` is the real LightOS tool
+// (lighttool.toml + the light-sdk tool plugin, LightScreen UI) and `:server` is
+// its companion — a plain Android app hosting the SDK's LightSdkService + media
+// methods, the /sdcard/Audiobooks scan, and playback (foreground service +
+// MediaSession), i.e. everything the tool runtime forbids. Both consume the SDK
+// as an included build.
 includeBuild("../light-sdk") {
     dependencySubstitution {
         substitute(module("com.thelightphone:sdk-ui")).using(project(":sdk:ui"))
         substitute(module("com.thelightphone:sdk-client")).using(project(":sdk:client"))
+        substitute(module("com.thelightphone:sdk-server")).using(project(":sdk:server"))
+        substitute(module("com.thelightphone:sdk-shared")).using(project(":sdk:shared"))
     }
 }

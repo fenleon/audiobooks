@@ -1,150 +1,59 @@
 package com.stan.libbylight.player
 
 import android.content.Context
-import android.media.AudioAttributes
-import android.media.MediaPlayer
-import android.media.PlaybackParams
-import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import com.stan.libbylight.PlaybackForegroundService
 import com.stan.libbylight.library.Audiobook
 import com.stan.libbylight.library.AudiobookProgressStore
-import com.stan.libbylight.library.AudiobookSource
+import com.thelightphone.sdk.audio.LightAudioItem
+import com.thelightphone.sdk.audio.LightAudioPlayer
+import com.thelightphone.sdk.audio.LightAudioSource
+import com.thelightphone.sdk.audio.LightAudioUsage
+import com.thelightphone.sdk.audio.LightMediaMetadata
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 private const val TAG = "LocalPlayback"
 private const val PROGRESS_SAVE_INTERVAL_MILLISECONDS = 7_000L
+private const val END_EPSILON_MILLISECONDS = 1_500L
+private const val SILENT_FAILURE_POLLS = 6
 
+/**
+ * Owns playback via the SDK's [LightAudioPlayer] (ExoPlayer queue) and keeps
+ * [PlayerState] + the foreground service in sync. The queue is the whole book
+ * (one item per part); the global timeline math in [MultiPartTimeline] maps
+ * book positions to queue items.
+ */
 object LocalPlaybackController {
     private lateinit var appContext: Context
+    private lateinit var player: LightAudioPlayer
     private val handler = Handler(Looper.getMainLooper())
     private val mutableState = MutableStateFlow(PlayerState(diagnostic = "No local book loaded"))
-    private val players = mutableListOf<MediaPlayer>()
     private var partDurations = LongArray(0)
-    private var activePartIndex = 0
-    private var preparedPartCount = 0
-    private var openGeneration = 0
     private var activeBook: Audiobook? = null
     private var speed = 1f
     private var lastSavedAt = 0L
+    private var wasPlaying = false
+    private var pendingSeekMilliseconds: Long? = null
+    private var silentFailureStreak = 0
 
     val state: StateFlow<PlayerState> = mutableState.asStateFlow()
 
     fun init(context: Context) {
         appContext = context.applicationContext
+        player = LightAudioPlayer(appContext, LightAudioUsage.Speech)
+        PlaybackMediaSession.init(appContext)
     }
 
     fun open(book: Audiobook, autoPlay: Boolean = false) {
-        persistProgress()
-        PlaybackForegroundService.update(appContext, false)
-        releasePlayer()
-        val generation = ++openGeneration
-        activeBook = book
-        val saved = AudiobookProgressStore.read(book.source, book.id)
-        speed = saved.playbackSpeed.coerceIn(1f, 2f)
-        mutableState.value = PlayerState(
-            title = book.title,
-            chapter = book.author.takeIf { it.isNotBlank() },
-            positionSeconds = saved.positionMilliseconds / 1000.0,
-            durationSeconds = (book.durationMilliseconds.takeIf { it > 0 }
-                ?: saved.durationMilliseconds) / 1000.0,
-            playbackSpeed = speed.toDouble(),
-            diagnostic = "Preparing…",
-            readiness = PlayerReadiness.Preparing,
-        )
-
-        val playbackReferences = book.parts.map { it.playbackReference }
-            .ifEmpty { listOf(book.playbackReference) }
-        partDurations = LongArray(playbackReferences.size)
-        preparedPartCount = 0
-        activePartIndex = 0
-
+        Log.d(TAG, "open() called for '${book.title}'")
         try {
-            playbackReferences.forEachIndexed { index, playbackReference ->
-                val mediaPlayer = MediaPlayer().apply {
-                    setAudioAttributes(
-                        AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_MEDIA)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                            .build(),
-                    )
-                    val playbackUri = Uri.parse(playbackReference)
-                    if (playbackUri.scheme.equals("http", true) || playbackUri.scheme.equals("https", true)) {
-                        setDataSource(playbackReference)
-                    } else if (playbackUri.scheme.isNullOrBlank()) {
-                        setDataSource(playbackReference)
-                    } else {
-                        setDataSource(appContext, playbackUri)
-                    }
-                    setOnPreparedListener { prepared ->
-                        if (generation != openGeneration) return@setOnPreparedListener
-                        partDurations[index] = prepared.duration.toLong().coerceAtLeast(0)
-                        preparedPartCount++
-                        if (preparedPartCount == players.size) {
-                            players.zipWithNext().forEach { (current, next) ->
-                                runCatching { current.setNextMediaPlayer(next) }
-                            }
-                            val total = totalDuration()
-                            val target = saved.positionMilliseconds.coerceIn(
-                                0,
-                                total.takeIf { it > 0 } ?: Long.MAX_VALUE,
-                            )
-                            seekPreparedPlayers(target, resume = false)
-                            updateState()
-                            if (autoPlay) {
-                                players.getOrNull(activePartIndex)?.start()
-                                PlaybackForegroundService.update(appContext, true)
-                            }
-                            updateState()
-                            Log.d(TAG, "playback prepared parts=${players.size}")
-                            scheduleUpdates()
-                        }
-                    }
-                    setOnInfoListener { mediaPlayer, what, _ ->
-                        when (what) {
-                            MediaPlayer.MEDIA_INFO_BUFFERING_START -> {
-                                mutableState.value = mutableState.value.copy(
-                                    readiness = PlayerReadiness.Buffering,
-                                    diagnostic = "Buffering…",
-                                )
-                            }
-                            MediaPlayer.MEDIA_INFO_BUFFERING_END -> updateState()
-                        }
-                        false
-                    }
-                    setOnCompletionListener { completed ->
-                        if (generation != openGeneration) return@setOnCompletionListener
-                        if (index < players.lastIndex) {
-                            activePartIndex = index + 1
-                            players.getOrNull(activePartIndex)?.let(::applySpeedPreservingState)
-                            updateState()
-                            scheduleUpdates()
-                        } else {
-                            PlaybackForegroundService.update(appContext, false)
-                            updateState()
-                            persistProgress()
-                        }
-                    }
-                    setOnErrorListener { _, what, _ ->
-                        Log.w(TAG, "playback failed reason=$what")
-                        PlaybackForegroundService.update(appContext, false)
-                        mutableState.value = mutableState.value.copy(
-                            isPlaying = false,
-                            diagnostic = "This audiobook could not be played.",
-                            readiness = PlayerReadiness.Error,
-                        )
-                        true
-                    }
-                    prepareAsync()
-                }
-                players += mediaPlayer
-            }
-        } catch (_: Exception) {
-            Log.w(TAG, "playback failed reason=unreadable")
+            openInternal(book, autoPlay)
+        } catch (error: Exception) {
+            Log.w(TAG, "open() failed", error)
             PlaybackForegroundService.update(appContext, false)
             mutableState.value = mutableState.value.copy(
                 isPlaying = false,
@@ -154,97 +63,178 @@ object LocalPlaybackController {
         }
     }
 
+    private fun openInternal(book: Audiobook, autoPlay: Boolean = false) {
+        persistProgress()
+        PlaybackForegroundService.update(appContext, false)
+        player.stop()
+        activeBook = book
+        val saved = AudiobookProgressStore.read(book.source, book.id)
+        speed = saved.playbackSpeed.coerceIn(1f, 2f)
+        val references = book.parts.map { it.playbackReference }
+            .ifEmpty { listOf(book.playbackReference) }
+        partDurations = LongArray(references.size) { index ->
+            book.parts.getOrNull(index)?.durationMilliseconds ?: 0L
+        }
+        val savedPosition = saved.positionMilliseconds.coerceAtLeast(0L)
+        // Fall back to part 0 when part durations are unknown: locatePart would
+        // otherwise land on the last part, corrupting the resume position.
+        val durationsKnown = partDurations.any { it > 0 }
+        val startPart = if (durationsKnown) locatePart(savedPosition, partDurations).index else 0
+        val items = references.map { reference ->
+            LightAudioItem(
+                source = LightAudioSource.UrlSource(reference),
+                metadata = LightMediaMetadata(
+                    title = book.title,
+                    artist = book.author.takeIf { it.isNotBlank() },
+                ),
+            )
+        }
+        mutableState.value = PlayerState(
+            title = book.title,
+            chapter = book.author.takeIf { it.isNotBlank() },
+            positionSeconds = savedPosition / 1000.0,
+            durationSeconds = (book.durationMilliseconds.takeIf { it > 0 }
+                ?: saved.durationMilliseconds) / 1000.0,
+            currentPartIndex = startPart,
+            playbackSpeed = speed.toDouble(),
+            diagnostic = "Preparing…",
+            readiness = PlayerReadiness.Preparing,
+        )
+        pendingSeekMilliseconds = null
+        runCatching {
+            player.setMediaQueue(items, startIndex = startPart.coerceIn(0, items.lastIndex))
+            player.speed = speed
+            // Applied by the poll loop once the start item's duration resolves
+            // (LightAudioPlayer clamps seeks to a known duration).
+            pendingSeekMilliseconds = if (durationsKnown) {
+                locatePart(savedPosition, partDurations).positionMilliseconds
+            } else {
+                null
+            }
+        }.onFailure { error ->
+            Log.w(TAG, "queue set failed: ${error.message}")
+            PlaybackForegroundService.update(appContext, false)
+            mutableState.value = mutableState.value.copy(
+                isPlaying = false,
+                diagnostic = "This audiobook could not be played.",
+                readiness = PlayerReadiness.Error,
+            )
+        }
+        updateState()
+        if (autoPlay) play()
+        scheduleUpdates()
+    }
+
     fun play() {
         if (mutableState.value.readiness != PlayerReadiness.Ready) return
-        players.getOrNull(activePartIndex)?.runCatching {
-            start()
-            PlaybackForegroundService.update(appContext, true)
-            updateState()
-            scheduleUpdates()
+        // An ended book restarts from the beginning, like the old MediaPlayer did.
+        if (!player.isPlaying.value && player.durationMs.value > 0 &&
+            player.positionMs.value >= player.durationMs.value - END_EPSILON_MILLISECONDS
+        ) {
+            player.seekTo(0L)
+            pendingSeekMilliseconds = null
         }
+        player.play()
+        PlaybackForegroundService.update(appContext, true)
+        PlaybackForegroundService.refresh(appContext)
+        updateState()
+        scheduleUpdates()
     }
 
     fun pause() {
-        players.getOrNull(activePartIndex)?.runCatching {
-            if (isPlaying) pause()
-            PlaybackForegroundService.update(appContext, false)
-            updateState()
-            persistProgress()
-        }
+        player.pause()
+        PlaybackForegroundService.update(appContext, false)
+        PlaybackForegroundService.refresh(appContext)
+        updateState()
+        persistProgress()
     }
 
     fun seekBy(deltaMilliseconds: Long) {
         seekTo(currentGlobalPosition() + deltaMilliseconds)
     }
 
+    /** Seeks on the book's global timeline, crossing part boundaries. */
     fun seekTo(positionMilliseconds: Long) {
-        if (players.isEmpty() || preparedPartCount != players.size) return
-        val target = positionMilliseconds.coerceIn(0, totalDuration().coerceAtLeast(0))
-        val wasPlaying = players.getOrNull(activePartIndex)?.runCatching { isPlaying }
-            ?.getOrDefault(false) == true
-        seekPreparedPlayers(target, resume = wasPlaying)
-        mutableState.value = mutableState.value.copy(positionSeconds = target / 1000.0)
+        activeBook ?: return
+        val total = totalDuration().coerceAtLeast(0)
+        val target = positionMilliseconds.coerceIn(0, total.takeIf { it > 0 } ?: Long.MAX_VALUE)
+        val part = locatePart(target, partDurations)
+        val currentIndex = player.currentMediaItemIndex.value.coerceAtLeast(0)
+        if (part.index != currentIndex) {
+            repeat((part.index - currentIndex).coerceAtLeast(0)) { player.skipToNext() }
+            repeat((currentIndex - part.index).coerceAtLeast(0)) { player.skipToPrevious() }
+        }
+        // Applied once the target item's duration resolves.
+        pendingSeekMilliseconds = part.positionMilliseconds
+        mutableState.value = mutableState.value.copy(
+            positionSeconds = target / 1000.0,
+            currentPartIndex = part.index,
+        )
         persistProgress()
+    }
+
+    /** Jumps to the start of the given part (chapter), preserving play/pause state. */
+    fun seekToPart(index: Int) {
+        if (partDurations.isEmpty()) return
+        seekTo(globalPartPosition(index.coerceIn(0, partDurations.lastIndex), 0, partDurations))
     }
 
     fun setSpeed(value: Double) {
         speed = value.toFloat().coerceIn(1f, 2f)
-        players.getOrNull(activePartIndex)?.let(::applySpeedPreservingState)
+        player.speed = speed
         mutableState.value = mutableState.value.copy(playbackSpeed = speed.toDouble())
         persistProgress()
     }
 
     fun persistProgress() {
         val book = activeBook ?: return
+        // Skip while the current queue item is unresolved: position and part
+        // index are unreliable, and a corrupt value persisted here once broke
+        // resume (book jumped to its last part).
+        if (!::player.isInitialized || player.durationMs.value == 0L) return
         val position = currentGlobalPosition()
             .takeIf { it > 0 } ?: (mutableState.value.positionSeconds * 1000).toLong()
         val duration = totalDuration()
             .takeIf { it > 0 } ?: (mutableState.value.durationSeconds * 1000).toLong()
-        AudiobookProgressStore.saveLocal(book, position, duration, speed)
+        AudiobookProgressStore.saveLocal(
+            book,
+            position.coerceIn(0, duration.coerceAtLeast(position)),
+            duration,
+            speed,
+        )
         lastSavedAt = System.currentTimeMillis()
     }
 
     fun close() {
         persistProgress()
         PlaybackForegroundService.update(appContext, false)
-        releasePlayer()
+        player.stop()
         activeBook = null
+        partDurations = LongArray(0)
+        pendingSeekMilliseconds = null
         mutableState.value = PlayerState(
             diagnostic = "No audiobook loaded",
             readiness = PlayerReadiness.Unavailable,
         )
-    }
-
-    private fun applySpeed(mediaPlayer: MediaPlayer) {
-        runCatching {
-            mediaPlayer.playbackParams = PlaybackParams().setSpeed(speed)
-        }
-    }
-
-    private fun applySpeedPreservingState(mediaPlayer: MediaPlayer) {
-        val wasPlaying = runCatching { mediaPlayer.isPlaying }.getOrDefault(false)
-        applySpeed(mediaPlayer)
-        if (!wasPlaying) {
-            runCatching {
-                if (mediaPlayer.isPlaying) mediaPlayer.pause()
-            }
-        }
+        PlaybackMediaSession.update(mutableState.value)
     }
 
     private fun updateState() {
-        val current = players.getOrNull(activePartIndex)
-        val duration = totalDuration()
         val position = currentGlobalPosition()
-        val playing = runCatching { current?.isPlaying }.getOrDefault(false) == true
+        val duration = totalDuration()
+        val currentIndex = player.currentMediaItemIndex.value.coerceAtLeast(0)
+        val playing = player.isPlaying.value
+        val errored = mutableState.value.readiness == PlayerReadiness.Error
         mutableState.value = mutableState.value.copy(
             positionSeconds = position / 1000.0,
             durationSeconds = duration / 1000.0,
+            currentPartIndex = currentIndex,
             isPlaying = playing,
             playbackSpeed = speed.toDouble(),
-            controlsFound = true,
-            diagnostic = "Local audiobook ready",
-            readiness = PlayerReadiness.Ready,
+            diagnostic = if (errored) mutableState.value.diagnostic else "Local audiobook ready",
+            readiness = if (errored) PlayerReadiness.Error else PlayerReadiness.Ready,
         )
+        PlaybackMediaSession.update(mutableState.value)
     }
 
     private fun scheduleUpdates() {
@@ -254,41 +244,57 @@ object LocalPlaybackController {
 
     private val updateRunnable = object : Runnable {
         override fun run() {
-            val current = players.getOrNull(activePartIndex) ?: return
+            // Keep part durations accurate once the platform resolves them.
+            val index = player.currentMediaItemIndex.value
+            if (index in partDurations.indices) {
+                player.durationMs.value.takeIf { it > 0 }?.let { partDurations[index] = it }
+            }
+            // Apply a pending seek once the target item's duration is known.
+            if (pendingSeekMilliseconds != null && player.durationMs.value > 0) {
+                player.seekTo(pendingSeekMilliseconds!!)
+                pendingSeekMilliseconds = null
+            }
             updateState()
-            if (current.isPlaying && System.currentTimeMillis() - lastSavedAt >= PROGRESS_SAVE_INTERVAL_MILLISECONDS) {
+            val playing = player.isPlaying.value
+            if (playing && System.currentTimeMillis() - lastSavedAt >= PROGRESS_SAVE_INTERVAL_MILLISECONDS) {
                 persistProgress()
+            }
+            // Queue ended: the platform reached the end of the last item.
+            if (wasPlaying && !playing && player.positionMs.value > 0 &&
+                player.durationMs.value > 0 &&
+                player.positionMs.value >= player.durationMs.value - END_EPSILON_MILLISECONDS
+            ) {
+                PlaybackForegroundService.update(appContext, false)
+                persistProgress()
+            }
+            wasPlaying = playing
+            // Silent load failure: the item never resolves a duration or plays.
+            if (!playing && player.durationMs.value == 0L && activeBook != null &&
+                mutableState.value.readiness != PlayerReadiness.Error
+            ) {
+                silentFailureStreak++
+                if (silentFailureStreak >= SILENT_FAILURE_POLLS) {
+                    silentFailureStreak = 0
+                    PlaybackForegroundService.update(appContext, false)
+                    mutableState.value = mutableState.value.copy(
+                        isPlaying = false,
+                        diagnostic = "This audiobook could not be played.",
+                        readiness = PlayerReadiness.Error,
+                    )
+                    PlaybackMediaSession.update(mutableState.value)
+                }
+            } else {
+                silentFailureStreak = 0
             }
             handler.postDelayed(this, 500)
         }
     }
 
-    private fun releasePlayer() {
-        handler.removeCallbacks(updateRunnable)
-        players.forEach { it.runCatching { release() } }
-        players.clear()
-        partDurations = LongArray(0)
-        activePartIndex = 0
-        preparedPartCount = 0
-    }
-
     private fun totalDuration(): Long = partDurations.sum()
 
     private fun currentGlobalPosition(): Long {
-        val current = players.getOrNull(activePartIndex)
-        val withinPart = runCatching { current?.currentPosition?.toLong() }.getOrNull() ?: 0L
-        return globalPartPosition(activePartIndex, withinPart, partDurations)
-    }
-
-    private fun seekPreparedPlayers(positionMilliseconds: Long, resume: Boolean) {
-        if (players.isEmpty()) return
-        val target = locatePart(positionMilliseconds, partDurations)
-        players.getOrNull(activePartIndex)?.runCatching {
-            if (isPlaying) pause()
-        }
-        activePartIndex = target.index
-        players[target.index].seekTo(target.positionMilliseconds.toInt())
-        applySpeedPreservingState(players[target.index])
-        if (resume) players[target.index].start()
+        val index = player.currentMediaItemIndex.value.coerceAtLeast(0)
+        val within = player.positionMs.value
+        return globalPartPosition(index, within, partDurations)
     }
 }

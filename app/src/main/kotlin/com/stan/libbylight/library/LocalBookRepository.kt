@@ -293,6 +293,7 @@ object LocalBookRepository {
                             AudiobookPart(
                                 playbackReference = it.uri.toString(),
                                 durationMilliseconds = it.embedded.durationMilliseconds,
+                                title = it.displayName.removeSupportedSuffix(),
                             )
                         },
                     )

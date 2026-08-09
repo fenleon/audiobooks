@@ -1,0 +1,19 @@
+[versions]
+agp = "8.12.3"
+kotlin = "2.3.20"
+compose-activity = "1.13.0"
+kotlinx-coroutines = "1.10.2"
+sdk = "0.1.0"
+
+[libraries]
+compose-activity = { module = "androidx.activity:activity-compose", version.ref = "compose-activity" }
+kotlinx-coroutines = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "kotlinx-coroutines" }
+# Consumed from the included ../light-sdk build via dependencySubstitution;
+# versions must match light-sdk/gradle.properties sdkGroup/sdkVersion.
+sdk-ui = { module = "com.thelightphone:sdk-ui", version.ref = "sdk" }
+sdk-client = { module = "com.thelightphone:sdk-client", version.ref = "sdk" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

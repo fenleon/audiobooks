@@ -3,6 +3,7 @@ package com.stan.libbylight.screens
 import android.app.Activity
 import android.net.Uri
 import android.provider.MediaStore
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -41,6 +43,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import com.stan.libbylight.BuildConfig
 import com.stan.libbylight.library.Audiobook
+import com.stan.libbylight.library.AudiobookPart
 import com.stan.libbylight.library.AudiobookProgressStore
 import com.stan.libbylight.library.AudiobookSource
 import com.stan.libbylight.library.LocalBookRepository
@@ -49,20 +52,20 @@ import com.stan.libbylight.library.PersistedActiveAudiobook
 import com.stan.libbylight.player.LocalPlaybackController
 import com.stan.libbylight.player.PlayerReadiness
 import com.stan.libbylight.player.PlayerState
-import com.stan.libbylight.ui.LightBarButton
-import com.stan.libbylight.ui.LightBottomBar
-import com.stan.libbylight.ui.LightIcon
-import com.stan.libbylight.ui.LightIcons
-import com.stan.libbylight.ui.LightLazyScrollView
-import com.stan.libbylight.ui.LightScrollView
-import com.stan.libbylight.ui.LightText
-import com.stan.libbylight.ui.LightTextVariant
-import com.stan.libbylight.ui.LightTheme
-import com.stan.libbylight.ui.LightThemeTokens
-import com.stan.libbylight.ui.LightTopBar
-import com.stan.libbylight.ui.LightTopBarCenter
-import com.stan.libbylight.ui.gridUnitsAsDp
-import com.stan.libbylight.ui.lightClickable
+import com.thelightphone.sdk.ui.LightBarButton
+import com.thelightphone.sdk.ui.LightBottomBar
+import com.thelightphone.sdk.ui.LightIcon
+import com.thelightphone.sdk.ui.LightIcons
+import com.thelightphone.sdk.ui.LightLazyScrollView
+import com.thelightphone.sdk.ui.LightScrollView
+import com.thelightphone.sdk.ui.LightText
+import com.thelightphone.sdk.ui.LightTextVariant
+import com.thelightphone.sdk.ui.LightTheme
+import com.thelightphone.sdk.ui.LightThemeTokens
+import com.thelightphone.sdk.ui.LightTopBar
+import com.thelightphone.sdk.ui.LightTopBarCenter
+import com.thelightphone.sdk.ui.gridUnitsAsDp
+import com.thelightphone.sdk.ui.lightClickable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -151,7 +154,10 @@ fun PlayerDebugScreen() {
         val previous = activeBook
         val requestedId = AudiobookProgressStore.qualifiedId(book.source, book.id)
         val activeId = previous?.let { AudiobookProgressStore.qualifiedId(it.source, it.id) }
-        if (requestedId == activeId) {
+        // Shortcut only when the controller has actually loaded this book. The
+        // UI's activeBook is pre-seeded from persisted data at startup (a book
+        // without parts), so an id match alone must not skip LocalPlaybackController.open().
+        if (requestedId == activeId && localPlayerState.title == book.title) {
             AudiobookProgressStore.markOpened(book)
             showBooks = false
             return
@@ -184,7 +190,12 @@ fun PlayerDebugScreen() {
             return
         }
         val current = activeBook
-        if (current != null && AudiobookProgressStore.qualifiedId(current.source, current.id) == persisted.qualifiedId) {
+        // Only trust the seeded activeBook when the controller really loaded it
+        // (title check); otherwise fall through and open the persisted book.
+        if (current != null &&
+            AudiobookProgressStore.qualifiedId(current.source, current.id) == persisted.qualifiedId &&
+            localPlayerState.title == current.title
+        ) {
             showBooks = false
             return
         }
@@ -311,6 +322,7 @@ fun PlayerDebugScreen() {
                     onBack15 = { LocalPlaybackController.seekBy(-15_000) },
                     onForward15 = { LocalPlaybackController.seekBy(15_000) },
                     onSeekTo = LocalPlaybackController::seekTo,
+                    onSeekToPart = LocalPlaybackController::seekToPart,
                     onSetSpeed = LocalPlaybackController::setSpeed,
                     statusText = if (localPlayerState.readiness == PlayerReadiness.Error) {
                         localPlayerState.diagnostic
@@ -428,7 +440,6 @@ private fun BooksScreen(
             }
 
             LightBottomBar(
-                horizontalPaddingUnits = 0.5f,
                 items = listOf(
                     LightBarButton.LightIcon(
                         icon = LightIcons.SETTINGS,
@@ -713,17 +724,20 @@ private fun PlayerScreen(
     onBack15: () -> Unit,
     onForward15: () -> Unit,
     onSeekTo: (positionMilliseconds: Long) -> Unit,
+    onSeekToPart: (partIndex: Int) -> Unit,
     onSetSpeed: (Double) -> Unit,
     statusText: String,
     onBooks: () -> Unit,
 ) {
+    var showChaptersPicker by remember { mutableStateOf(false) }
     var showSpeedPicker by remember { mutableStateOf(false) }
-    var requestedSpeed by remember { mutableStateOf<Double?>(null) }
     var scrubProgress by remember { mutableStateOf<Float?>(null) }
     var pendingSeekMilliseconds by remember { mutableStateOf<Long?>(null) }
     val title = book?.title?.takeIf { it.isNotBlank() }
         ?: state.title.takeIf { it.isNotBlank() }
         ?: "Audiobook"
+    val partCount = book?.parts?.size ?: 0
+    val hasChapters = partCount > 1
     val authoritativePositionSeconds = state.positionSeconds
     val liveProgress = if (state.durationSeconds > 0) {
         (authoritativePositionSeconds / state.durationSeconds).toFloat().coerceIn(0f, 1f)
@@ -741,14 +755,6 @@ private fun PlayerScreen(
         pendingSeekMilliseconds != null -> pendingSeekMilliseconds!! / 1000.0
         else -> authoritativePositionSeconds
     }
-    val displayedSpeed = requestedSpeed ?: state.playbackSpeed
-
-    LaunchedEffect(state.playbackSpeed, requestedSpeed) {
-        val requested = requestedSpeed ?: return@LaunchedEffect
-        if (kotlin.math.abs(state.playbackSpeed - requested) < 0.01) {
-            requestedSpeed = null
-        }
-    }
 
     LaunchedEffect(state.positionSeconds, pendingSeekMilliseconds) {
         val pending = pendingSeekMilliseconds ?: return@LaunchedEffect
@@ -765,11 +771,22 @@ private fun PlayerScreen(
     }
 
     BardSurface {
+        if (showChaptersPicker) {
+            ChaptersPicker(
+                parts = book?.parts.orEmpty(),
+                currentPartIndex = state.currentPartIndex,
+                onSelect = { partIndex ->
+                    onSeekToPart(partIndex)
+                    showChaptersPicker = false
+                },
+                onClose = { showChaptersPicker = false },
+            )
+            return@BardSurface
+        }
         if (showSpeedPicker) {
             SpeedPicker(
-                currentSpeed = displayedSpeed,
+                currentSpeed = state.playbackSpeed,
                 onSelect = { speed ->
-                    requestedSpeed = speed
                     onSetSpeed(speed)
                     showSpeedPicker = false
                 },
@@ -815,24 +832,56 @@ private fun PlayerScreen(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(0.75f.gridUnitsAsDp()))
-                LightText(
-                    text = when {
-                        hasTiming -> formatPlaybackTime(state.durationSeconds)
-                        state.diagnostic == "This audiobook could not be played." -> state.diagnostic
-                        else -> "--:--"
-                    },
-                    variant = LightTextVariant.Detail,
-                    align = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(0.25f.gridUnitsAsDp()))
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(1.25f.gridUnitsAsDp()),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (statusText.isNotBlank()) {
+                if (hasChapters) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 0.5f.gridUnitsAsDp())
+                            .lightClickable(
+                                onClickLabel = "Open chapters",
+                                role = Role.Button,
+                                onClick = { showChaptersPicker = true },
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        LightText(
+                            text = buildString {
+                                append(
+                                    "Chapter ${(state.currentPartIndex + 1).coerceIn(1, partCount)} of $partCount",
+                                )
+                                if (hasTiming) {
+                                    append(" · ${formatPlaybackTime(state.durationSeconds)}")
+                                }
+                            },
+                            variant = LightTextVariant.Detail,
+                            align = TextAlign.Center,
+                        )
+                    }
+                    Spacer(Modifier.height(0.75f.gridUnitsAsDp()))
+                } else {
+                    LightText(
+                        text = when {
+                            hasTiming -> formatPlaybackTime(state.durationSeconds)
+                            state.diagnostic == "This audiobook could not be played." -> state.diagnostic
+                            else -> "--:--"
+                        },
+                        variant = LightTextVariant.Detail,
+                        align = TextAlign.Center,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onSizeChanged { size ->
+                                Log.d("TextSize", "DURATION(Detail) size=$size")
+                            },
+                    )
+                    Spacer(Modifier.height(0.25f.gridUnitsAsDp()))
+                }
+                if (statusText.isNotBlank()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(1.25f.gridUnitsAsDp()),
+                        contentAlignment = Alignment.Center,
+                    ) {
                         LightText(
                             text = statusText,
                             variant = LightTextVariant.Superfine,
@@ -843,7 +892,7 @@ private fun PlayerScreen(
                     }
                 }
 
-                Spacer(Modifier.height(2.5f.gridUnitsAsDp()))
+                Spacer(Modifier.height(1.5f.gridUnitsAsDp()))
                 PlaybackProgress(
                     progress = displayedProgress,
                     enabled = hasTiming && state.readiness == PlayerReadiness.Ready,
@@ -901,7 +950,11 @@ private fun PlayerScreen(
                     },
                     variant = LightTextVariant.Fine,
                     align = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onSizeChanged { size ->
+                            Log.d("TextSize", "POSITION(Fine) size=$size")
+                        },
                 )
                 Spacer(Modifier.weight(1f))
             }
@@ -909,7 +962,7 @@ private fun PlayerScreen(
             LightBottomBar(
                 items = listOf(
                     LightBarButton.Text(
-                        "${trimSpeed(displayedSpeed)}×",
+                        "${trimSpeed(state.playbackSpeed)}×",
                         onClick = { showSpeedPicker = true },
                     ),
                 ),
@@ -974,7 +1027,7 @@ private fun PlaybackProgress(
 
 @Composable
 private fun PlayerIconAction(
-    icon: com.stan.libbylight.ui.LightIconConfiguration,
+    icon: com.thelightphone.sdk.ui.LightIconConfiguration,
     description: String,
     iconWidth: Float = 2f,
     iconHeight: Float = 2f,
@@ -1008,6 +1061,63 @@ private fun PlayerIconAction(
 }
 
 @Composable
+private fun ChaptersPicker(
+    parts: List<AudiobookPart>,
+    currentPartIndex: Int,
+    onSelect: (Int) -> Unit,
+    onClose: () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        LightTopBar(
+            leftButton = LightBarButton.LightIcon(
+                icon = LightIcons.BACK,
+                onClick = onClose,
+                contentDescription = "Back to Player",
+            ),
+            center = LightTopBarCenter.Text("Chapters"),
+        )
+        LightScrollView(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .padding(horizontal = 1.5f.gridUnitsAsDp()),
+        ) {
+            Spacer(Modifier.height(0.5f.gridUnitsAsDp()))
+            parts.forEachIndexed { index, part ->
+                val isSelected = index == currentPartIndex
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(5.5f.gridUnitsAsDp())
+                        .semantics { selected = isSelected }
+                        .lightClickable(
+                            onClickLabel = "Play chapter ${index + 1}",
+                            role = Role.RadioButton,
+                        ) { onSelect(index) },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    LightText(
+                        text = part.title.ifBlank { "Chapter ${index + 1}" },
+                        variant = LightTextVariant.Paragraph,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (part.durationMilliseconds > 0) {
+                        Spacer(Modifier.width(1f.gridUnitsAsDp()))
+                        LightText(
+                            text = formatPlaybackTime(part.durationMilliseconds / 1000.0),
+                            variant = LightTextVariant.Detail,
+                            lighten = true,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun SpeedPicker(
     currentSpeed: Double,
     onSelect: (Double) -> Unit,
@@ -1020,31 +1130,31 @@ private fun SpeedPicker(
                 onClick = onClose,
                 contentDescription = "Back to Player",
             ),
-            center = LightTopBarCenter.Text("Playback Speed"),
+            center = LightTopBarCenter.Text("Speed"),
         )
         LightScrollView(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .padding(start = 2f.gridUnitsAsDp()),
+                .padding(horizontal = 1.5f.gridUnitsAsDp()),
         ) {
             Spacer(Modifier.height(0.5f.gridUnitsAsDp()))
-            listOf(1.0, 1.25, 1.5, 1.75, 2.0).forEach { speed ->
-                val isSelected = kotlin.math.abs(currentSpeed - speed) < 0.01
-                Box(
+            speedChoices.forEach { speed ->
+                val isSelected = kotlin.math.abs(speed - currentSpeed) < 0.01
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(5.5f.gridUnitsAsDp())
                         .semantics { selected = isSelected }
                         .lightClickable(
-                            onClickLabel = "Set speed to ${trimSpeed(speed)} times",
+                            onClickLabel = "Playback speed ${trimSpeed(speed)}×",
                             role = Role.RadioButton,
                         ) { onSelect(speed) },
-                    contentAlignment = Alignment.CenterStart,
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     LightText(
                         text = "${trimSpeed(speed)}×",
-                        variant = LightTextVariant.Heading,
+                        variant = LightTextVariant.Paragraph,
                     )
                 }
             }
@@ -1091,7 +1201,7 @@ private fun LocalBooksScreen(
                     "Scanning…"
                 } else when (result) {
                     null -> ""
-                    LocalScanResult.PermissionRequired -> "Bard needs permission to read audio files."
+                    LocalScanResult.PermissionRequired -> "Audiobooks needs permission to read audio files."
                     LocalScanResult.FolderMissing -> "No Audiobooks folder found."
                     LocalScanResult.Empty -> "No audiobook files found."
                     is LocalScanResult.Success -> "${result.books.size} books found"
@@ -1232,6 +1342,8 @@ private fun PersistedActiveAudiobook.toAudiobook(): Audiobook = Audiobook(
     progressPercentOverride = progress.progressPercentOverride,
     dueText = progress.dueText,
 )
+
+private val speedChoices = listOf(1.0, 1.25, 1.5, 1.75, 2.0)
 
 private fun trimSpeed(speed: Double): String =
     if (speed % 1.0 == 0.0) speed.toInt().toString() else speed.toString()

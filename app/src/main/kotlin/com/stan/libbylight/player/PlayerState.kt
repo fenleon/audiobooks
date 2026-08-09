@@ -13,6 +13,7 @@ data class PlayerState(
     val chapter: String? = null,
     val positionSeconds: Double = 0.0,
     val durationSeconds: Double = 0.0,
+    val currentPartIndex: Int = 0,
     val isPlaying: Boolean = false,
     val playbackSpeed: Double = 1.0,
     val controlsFound: Boolean = false,

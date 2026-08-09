@@ -8,6 +8,7 @@ enum class AudiobookSource {
 data class AudiobookPart(
     val playbackReference: String,
     val durationMilliseconds: Long,
+    val title: String = "",
 )
 
 data class Audiobook(

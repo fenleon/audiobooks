@@ -6,30 +6,31 @@ pluginManagement {
     }
 }
 
-val localProperties = java.util.Properties().apply {
-    val file = File(rootDir, "local.properties")
-    if (file.exists()) file.inputStream().use(::load)
-}
-
-fun privateRepositoryValue(name: String): String =
-    localProperties.getProperty(name) ?: System.getenv(name).orEmpty()
-
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         google()
         mavenCentral()
+        // sdk:ui api-exposes com.github.lightphone:light-keyboard (font);
+        // the composite resolves it against the consumer's repositories.
         maven {
-            url = uri("https://maven.pkg.github.com/lightphone/light-keyboard")
-            credentials {
-                username = privateRepositoryValue("gpr.user")
-                    .ifBlank { privateRepositoryValue("GITHUB_ACTOR") }
-                password = privateRepositoryValue("gpr.key")
-                    .ifBlank { privateRepositoryValue("GITHUB_TOKEN") }
-            }
+            name = "JitPack"
+            url = uri("https://jitpack.io")
         }
     }
 }
 
-rootProject.name = "libbylight"
+rootProject.name = "audiobooks"
+
 include(":app")
+
+// Audiobooks is a plain Android app (not a light-sdk "tool"): it needs a user
+// manifest, a playback foreground service, and Context access, which the
+// light-sdk tool plugin forbids. It still builds on the SDK's design system
+// and client library, so the SDK is consumed here as an included build.
+includeBuild("../light-sdk") {
+    dependencySubstitution {
+        substitute(module("com.thelightphone:sdk-ui")).using(project(":sdk:ui"))
+        substitute(module("com.thelightphone:sdk-client")).using(project(":sdk:client"))
+    }
+}

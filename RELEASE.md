@@ -1,132 +1,134 @@
-# Bard Private Alpha Release
+# Audiobooks — Release
+
+Audiobooks is a standalone Gradle build at the workspace root (`bard/`, module
+`:app`), consuming the Light SDK at `../light-sdk` as an included build.
+
+Release identity: package `com.stan.libbylight`, label "Audiobooks".
+
+## Signing
+
+**Keep one signing key for every future upgrade using this application ID.**
+Android refuses to upgrade an app whose signature changed; a key change means
+uninstalling and losing all listening progress.
+
+The app currently signs **both** debug and release with the workspace dev
+key (same key the SDK tools/emulator use):
+
+- Keystore: `../light-sdk/sdk/keys/lightsdk-dev.jks`, alias `lightsdk-dev`,
+  password `android` (dev-only, in-repo — do not use as a production identity).
+- Sideloadable, and treated as "Light-signed" by the LightOS emulator.
+
+For a true production release, replace this with a private per-app keystore
+stored **outside the repository**, keep the same key for all future upgrades,
+and never commit the keystore or its passwords.
 
 ## Prerequisites
 
-- JDK 17 (Android Studio's bundled JBR is supported).
-- Android SDK platform/build tools for this project.
-- A private release keystore outside the repository.
-- A connected Light Phone III with USB debugging for installation tests.
-
-The release identity is `com.stan.libbylight`. Preserve the same signing key for
-every future upgrade using this application ID.
-
-## Signing setup
-
-Store the release keystore outside this repository, for example:
-
-```text
-~/.android/keys/bard-release.jks
-```
-
-Copy `keystore.properties.example` to the ignored `keystore.properties` file,
-then replace the placeholder password values locally. Restrict the file to the
-current user:
-
-```sh
-cp keystore.properties.example keystore.properties
-chmod 600 keystore.properties
-```
-
-Never commit `keystore.properties`, a keystore, or signing passwords. Release
-tasks fail closed when the properties file is absent.
+- The workspace toolchain, from the repo root:
+  `source tools/env.sh` (sets JDK 21 + Android SDK).
+- Build through the memory-guarded wrapper (`tools/build`); it refuses to run
+  below its RAM floor and stops leftover daemons.
+- A booted LightOS emulator or a connected Light Phone III for install tests.
 
 ## Build
 
-From the repository root:
-
 ```sh
-./gradlew clean assembleRelease
+tools/build --dir bard :app:assembleRelease
 ```
 
-The signed APK is produced at:
+Outputs:
 
 ```text
-app/build/outputs/apk/release/app-release.apk
+bard/app/build/outputs/apk/release/app-release.apk
+bard/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-The debug APK is produced at:
+Release note: the release variant recompiles more than debug and has OOM-killed
+the Gradle daemon on this 16 GB machine while the emulator was running — stop
+the emulator during the build if memory is tight.
 
-```text
-app/build/outputs/apk/debug/app-debug.apk
-```
+## Versioning
+
+`versionCode` / `versionName` are static in `bard/app/build.gradle.kts`.
+Bump `versionCode` by 1 for every release so devices accept the upgrade.
 
 ## Verify
 
-Inspect package/version metadata and signing information:
-
 ```sh
-apkanalyzer manifest application-id app/build/outputs/apk/release/app-release.apk
-apkanalyzer manifest version-code app/build/outputs/apk/release/app-release.apk
-apkanalyzer manifest version-name app/build/outputs/apk/release/app-release.apk
-apksigner verify --verbose --print-certs app/build/outputs/apk/release/app-release.apk
-```
-
-Create a SHA-256 checksum:
-
-```sh
-shasum -a 256 app/build/outputs/apk/release/app-release.apk
+apksigner verify --verbose --print-certs bard/app/build/outputs/apk/release/app-release.apk
+aapt dump badging bard/app/build/outputs/apk/release/app-release.apk | grep -E "package:|versionCode"
+shasum -a 256 bard/app/build/outputs/apk/release/app-release.apk
 ```
 
 ## Install
 
-An upgrade installation preserves Bard's app-private listening progress:
+An upgrade installation preserves Audiobooks's app-private listening progress (only
+possible with the same signing key):
 
 ```sh
-adb install -r app/build/outputs/apk/release/app-release.apk
+adb install -r bard/app/build/outputs/apk/release/app-release.apk
 ```
 
-A clean installation removes the existing package and all its app-private data.
-Only run this after explicitly accepting that listening progress will be erased:
+A clean installation removes the package and its data — only run this after
+explicitly accepting that progress is erased (also required when the previously
+installed APK used a different key):
 
 ```sh
 adb uninstall com.stan.libbylight
-adb install app/build/outputs/apk/release/app-release.apk
+adb install bard/app/build/outputs/apk/release/app-release.apk
+```
+
+On the emulator, grant the storage permission after a clean install:
+
+```sh
+adb shell pm grant com.stan.libbylight android.permission.READ_MEDIA_AUDIO
 ```
 
 ## Tester installation
 
-1. Enable developer/USB debugging access on the Light Phone III.
-2. Connect the phone to a trusted computer.
-3. Install the supplied APK with `adb install -r <apk-file>`.
-4. Open Bard from the phone's tools/application list.
-5. Keep the APK private; this is an early test build.
+1. Enable developer/USB debugging on the Light Phone III.
+2. Connect the phone to a trusted computer; `adb devices` must show it as `device`.
+3. `adb install -r <apk-file>` (uninstall first if a different key was used).
+4. Open Audiobooks from the app list (it is a normal app, not a LightOS toolbox tool).
+5. Keep the APK private; this is an early build.
 
 ## Smoke-test checklist
 
 - Open Settings and confirm Version shows the expected release.
-- Open a book, play, seek ±15 seconds, scrub, and change speed.
-- Open a folder book with several chapter files and confirm playback continues
-  across part boundaries.
-- Turn the screen off for at least 90 seconds and confirm playback continues.
+- Open a book, play, seek ±15 seconds, scrub, and change speed from the panel.
+- Open a folder book with several chapter files; confirm playback continues
+  across part boundaries and the chapter list can jump to any part.
+- Press play, leave the app, and confirm background listening continues
+  (notification on `bard_playback`, position advances).
+- Press play and check the lockscreen/system media panel: seek bar, play/pause,
+  and the ±15-second actions; try a Bluetooth/headset media key.
 - Pause and confirm the foreground playback notification disappears.
-- Put MP3 and M4B files (single files and folders) in `Audiobooks`, scan, and play.
-- Restart Bard and confirm progress and Now Playing restore without autoplay.
+- Put MP3/M4B files (single files and folders) in `Audiobooks`, scan, and play.
+- Restart Audiobooks and confirm progress and the last book restore without autoplay.
 
 ## Known limitations
 
-- Multi-file books play in filename order; chapter metadata is not exposed in
-  the interface.
-- Embedded chapter navigation is not supported.
-- No cover art, ebook reading, media-session controls, or cloud sync.
+- Multi-file books play in filename order; the player shows "Chapter N of M"
+  and tapping it opens a chapter list.
+- Embedded chapter metadata (MP3 chapter tags, M4B bookmarks) is not exposed.
+- No cover art, ebook reading, or cloud sync; books must be on the device in
+  `/sdcard/Audiobooks/`.
+- The debug/release APK is large (media3 + sdk:client transitive deps); a
+  minified release build would shrink it.
 
 ## Rollback
 
-Reinstall a previously retained APK signed with the same release key. Android
-normally blocks a lower version code; for an explicitly approved test-device
-rollback use:
+Reinstall a previously retained APK signed with the same key. Android normally
+blocks a lower version code; for an explicitly approved test-device rollback:
 
 ```sh
 adb install -r -d <previous-signed-bard.apk>
 ```
 
-If downgrade installation is rejected, a clean reinstall is the fallback, but
-it erases Bard's app-private data. Never uninstall without tester approval.
+If the downgrade is rejected, a clean reinstall is the fallback, but it erases
+app-private data. Never uninstall without tester approval.
 
 ## Publishing boundary
 
-Do not create a tag or GitHub Release until explicitly approved. Once approved,
-the corresponding command would be:
-
-```sh
-gh release create v0.1.0-alpha3 app/build/outputs/apk/release/app-release.apk --prerelease --title "Bard 0.1.0-alpha3"
-```
+Do not create a tag or GitHub Release until explicitly approved. Audiobooks's release
+home is this repository; its publishing identity is not yet established.

@@ -1,18 +1,41 @@
-# Bard
+# Audiobooks
 
 *A minimalist audiobook player for the Light Phone III.*
 
-Bard is an audiobook player built specifically for the Light Phone III. It plays audiobooks stored on your device in a calm, text-first interface inspired by the philosophy of Light OS.
+Audiobooks is an audiobook player built specifically for the Light Phone III. It plays audiobooks stored on your device in a calm, text-first interface inspired by the philosophy of Light OS.
 
-Instead of treating audiobooks as another streaming platform, Bard treats them as books. Your library lives on your device, and the player stays out of the way so you can focus on listening.
+Instead of treating audiobooks as another streaming platform, Audiobooks treats them as books. Your library lives on your device, and the player stays out of the way so you can focus on listening.
 
 There are no recommendations, storefronts, advertisements, social features, or cover art—just your books.
 
-Bard is currently in **alpha**. While it is already suitable for daily use, features and behavior may continue to evolve before a stable release.
+Audiobooks is currently in **alpha**. While it is already suitable for daily use, features and behavior may continue to evolve before a stable release.
 
 > **Current Status:** Alpha
 >
-> **Current Version:** 0.1.0-alpha3 (versionCode 3)
+> **Current Version:** 0.1.0 (versionCode 11)
+
+> **About the name:** the app is called *Audiobooks* — a plain, descriptive
+> name in the Light Phone tool-naming style. It was formerly known as *Bard*;
+> the package and internal identifiers keep the historical heritage so the app
+> identity and upgrade path never change.
+
+---
+
+# Screenshots
+
+The library, player, and local-book settings on the LightOS emulator (light-on-black, like the device):
+
+<p align="center">
+  <img src="screenshots/library.png" width="32%" alt="Library" />
+  <img src="screenshots/player.png" width="32%" alt="Player" />
+  <img src="screenshots/now-playing.png" width="32%" alt="Now playing" />
+</p>
+
+<p align="center">
+  <img src="screenshots/notification.png" width="32%" alt="Background playback notification" />
+  <img src="screenshots/settings.png" width="32%" alt="Settings" />
+  <img src="screenshots/local-books.png" width="32%" alt="Local books" />
+</p>
 
 ---
 
@@ -20,7 +43,7 @@ Bard is currently in **alpha**. While it is already suitable for daily use, feat
 
 ## Local Audiobooks
 
-Bard plays audiobooks stored on your device, without a cloud account or subscription.
+Audiobooks plays audiobooks stored on your device, without a cloud account or subscription.
 
 ### Supported Formats
 
@@ -36,9 +59,9 @@ Bard plays audiobooks stored on your device, without a cloud account or subscrip
 - Persistent listening progress across the entire book
 - Resume playback
 - Recent-first library ordering
-- Background playback
+- Background playback with a media notification and lockscreen/system media controls
 
-Bard scans the shared `Audiobooks` folder at any depth. Individual .mp3 and .m4b files directly inside `Audiobooks/` are treated as standalone books. Every folder inside `Audiobooks/` is treated as a single audiobook, with all supported audio files inside it played continuously in alphabetical order. Bard never copies books into app-private storage.
+Audiobooks scans the shared `Audiobooks` folder at any depth. Individual .mp3 and .m4b files directly inside `Audiobooks/` are treated as standalone books. Every folder inside `Audiobooks/` is treated as a single audiobook, with all supported audio files inside it played continuously in alphabetical order. Audiobooks never copies books into app-private storage.
 
 ---
 
@@ -54,19 +77,19 @@ Bard scans the shared `Audiobooks` folder at any depth. Individual .mp3 and .m4b
 
 Files are played in alphabetical order, so numbering them (01, 02, 03, …) is recommended.
 
-4. In Bard, open:
+4. In Audiobooks, open:
 
 ```
 Settings → Local Books → Scan for Books
 ```
 
-Android may request permission to read your audio library. Bard does **not** request broad "All Files" storage access.
+Android may request permission to read your audio library. Audiobooks does **not** request broad "All Files" storage access.
 
 ---
 
 # Current Limitations
 
-Bard is currently designed for the Light Phone III and Android 13 or newer.
+Audiobooks is currently designed for the Light Phone III and Android 13 or newer.
 
 Current limitations include:
 
@@ -79,11 +102,11 @@ Current limitations include:
 
 # Architecture
 
-Bard is a native Android application written in Kotlin using Jetpack Compose.
+Audiobooks is a native Android application written in Kotlin using Jetpack Compose.
 
 Its architecture is intentionally simple, with separate components responsible for local audiobook discovery, playback, progress persistence, and the interface.
 
-Bard incorporates selected user-interface resources derived from the Light SDK.
+The UI is built on the Light SDK's design system (`sdk:ui`) and playback runs on the SDK's `LightAudioPlayer` (ExoPlayer). Audiobooks is a standalone Gradle project that consumes the SDK as an included build — see `settings.gradle.kts`. It is a plain Android app rather than a LightOS "tool" because it needs a playback foreground service and direct storage access, which the SDK's tool plugin forbids.
 
 ---
 
@@ -91,14 +114,23 @@ Bard incorporates selected user-interface resources derived from the Light SDK.
 
 ## Requirements
 
-- JDK 17
-- Android Studio
+- JDK 17 or 21 (the workspace provides both under `tools/`)
 - Android SDK (API 36)
+- A sibling checkout of the Light SDK at `../light-sdk` (consumed as an included build)
 
 ## Build
 
+From the workspace root, through the memory-guarded wrapper:
+
 ```bash
-./gradlew assembleDebug
+source tools/env.sh
+tools/build --dir bard :app:assembleDebug
+```
+
+or directly in this directory:
+
+```bash
+./gradlew :app:assembleDebug
 ```
 
 Release signing instructions are available in `RELEASE.md`.
@@ -107,11 +139,11 @@ Release signing instructions are available in `RELEASE.md`.
 
 # Privacy & Security
 
-Bard does not include analytics, advertising, telemetry, or user accounts.
+Audiobooks does not include analytics, advertising, telemetry, or user accounts.
 
 Local audiobooks remain on your device.
 
-While listening, Bard runs a foreground service so playback continues when the screen is off or Bard is in the background. The playback notification shows the current book title; your library stays on-device.
+While listening, Audiobooks runs a foreground service so playback continues when the screen is off or Audiobooks is in the background. The playback notification shows the current book title; your library stays on-device.
 
 ---
 
@@ -131,7 +163,7 @@ Contributions, bug reports, feature requests, and suggestions are welcome.
 
 If you encounter a bug, please include:
 
-- Bard version
+- Audiobooks version
 - Light Phone III software version
 - Steps to reproduce
 - Expected behavior
@@ -143,7 +175,7 @@ Before opening an issue, please check whether the problem has already been repor
 
 # Frequently Asked Questions
 
-### Does Bard require an account?
+### Does Audiobooks require an account?
 
 No.
 
@@ -151,15 +183,15 @@ Audiobooks play entirely offline and do not require an account.
 
 ---
 
-### Does Bard collect analytics or usage data?
+### Does Audiobooks collect analytics or usage data?
 
 No.
 
-Bard does not include analytics, advertising, telemetry, or user tracking.
+Audiobooks does not include analytics, advertising, telemetry, or user tracking.
 
 ---
 
-### Does Bard support offline listening?
+### Does Audiobooks support offline listening?
 
 Yes.
 
@@ -169,9 +201,9 @@ Local audiobooks are always available offline.
 
 # Important
 
-Bard is an independent, unofficial open-source project.
+Audiobooks is an independent, unofficial open-source project.
 
-Bard is not affiliated with, endorsed by, sponsored by, or approved by The Light Phone, Inc.
+Audiobooks is not affiliated with, endorsed by, sponsored by, or approved by The Light Phone, Inc.
 
 Light Phone and Light OS are trademarks of The Light Phone, Inc.
 
@@ -181,11 +213,11 @@ Other trademarks are the property of their respective owners and are used solely
 
 # License
 
-Bard is licensed under the MIT License.
+Audiobooks is licensed under the MIT License.
 
 See [LICENSE](LICENSE) for the complete license text.
 
-Bard incorporates selected resources derived from the Light SDK. Applicable notices are included in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Audiobooks incorporates selected resources derived from the Light SDK. Applicable notices are included in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ---
 

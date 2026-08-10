@@ -50,13 +50,18 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requestAudioPermissionIfNeeded() {
-        val permission = if (Build.VERSION.SDK_INT >= 33) {
-            Manifest.permission.READ_MEDIA_AUDIO
-        } else {
-            Manifest.permission.READ_EXTERNAL_STORAGE
+        val permissions = mutableListOf(
+            if (Build.VERSION.SDK_INT >= 33) {
+                Manifest.permission.READ_MEDIA_AUDIO
+            } else {
+                Manifest.permission.READ_EXTERNAL_STORAGE
+            },
+        )
+        if (Build.VERSION.SDK_INT >= 33) {
+            permissions += Manifest.permission.POST_NOTIFICATIONS
         }
-        if (checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
-            permissionLauncher.launch(arrayOf(permission))
+        if (permissions.any { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }) {
+            permissionLauncher.launch(permissions.toTypedArray())
         }
     }
 }

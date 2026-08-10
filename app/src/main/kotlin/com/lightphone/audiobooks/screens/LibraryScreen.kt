@@ -135,14 +135,18 @@ class LibraryScreen(sealedActivity: SealedLightActivity) :
                 LightBottomBar(
                     modifier = Modifier.navigationBarsPadding(),
                     items = listOf(
-                        // No settings while choosing books to remove.
+                        // No settings or bluetooth while choosing books to remove.
                         if (editing) null else LightBarButton.LightIcon(
                             icon = LightIcons.SETTINGS,
                             onClick = { openSettings() },
                             contentDescription = "Settings",
                         ),
                         null,
-                        null,
+                        if (editing) null else LightBarButton.LightIcon(
+                            icon = LightIcons.BLUETOOTH,
+                            onClick = { openBluetoothSettings() },
+                            contentDescription = "Bluetooth settings",
+                        ),
                     ),
                 )
             }
@@ -159,6 +163,14 @@ class LibraryScreen(sealedActivity: SealedLightActivity) :
 
     private fun openSettings() {
         navigateTo(screenFactory = { SettingsScreen(it) })
+    }
+
+    /** The companion (which can't launch activities from the background) hosts
+     *  a transparent activity that opens the system Bluetooth settings. */
+    private fun openBluetoothSettings() {
+        startServerActivity(
+            "com.lightphone.audiobooks.server/com.lightphone.audiobooks.server.BluetoothSettingsActivity",
+        )
     }
 }
 

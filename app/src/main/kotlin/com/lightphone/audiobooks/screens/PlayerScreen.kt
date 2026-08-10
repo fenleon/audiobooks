@@ -170,7 +170,6 @@ class PlayerScreen(
                             onForward15 = { viewModel.seekBy(15_000) },
                             onTogglePlay = { viewModel.togglePlay() },
                             onSeekFraction = viewModel::seekToFraction,
-                            onOpenChapters = { openChapters() },
                         )
                     }
                 }
@@ -187,11 +186,12 @@ class PlayerScreen(
                                 text = formatSpeed(state!!.speed),
                                 onClick = { openSpeedPicker() },
                             ),
-                            LightBarButton.LightIcon(
-                                icon = LightIcons.BLUETOOTH,
-                                onClick = { openBluetoothSettings() },
-                                contentDescription = "Bluetooth settings",
-                            ),
+                            // Chapters exist only for multi-part (folder) books.
+                            if (state!!.partCount > 1) LightBarButton.LightIcon(
+                                icon = LightIcons.LIST,
+                                onClick = { openChapters() },
+                                contentDescription = "Chapters",
+                            ) else null,
                         ),
                     )
                 }
@@ -216,14 +216,6 @@ class PlayerScreen(
             viewModel.seekToPart(index)
         }
     }
-
-    /** The companion (which can't launch activities from the background) hosts
-     *  a transparent activity that opens the system Bluetooth settings. */
-    private fun openBluetoothSettings() {
-        startServerActivity(
-            "com.lightphone.audiobooks.server/com.lightphone.audiobooks.server.BluetoothSettingsActivity",
-        )
-    }
 }
 
 @Composable
@@ -235,7 +227,6 @@ private fun PlayerContent(
     onForward15: () -> Unit,
     onTogglePlay: () -> Unit,
     onSeekFraction: (Float) -> Unit,
-    onOpenChapters: () -> Unit,
 ) {
     val progress = if (state.durationMs > 0) {
         state.positionMs.toFloat() / state.durationMs
@@ -274,8 +265,7 @@ private fun PlayerContent(
                 align = TextAlign.Center,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 12.dp)
-                    .lightClickable(onClick = onOpenChapters),
+                    .padding(top = 12.dp),
             )
         }
 

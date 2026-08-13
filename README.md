@@ -92,8 +92,6 @@ Current limitations include:
 
 - Multi-file local audiobooks play in filename order; chapter titles come from embedded metadata (fallback: file name).
 - Embedded chapter metadata (MP3 chapter tags, M4B bookmarks) is not parsed — chapter navigation works per-file (folder books), not per embedded bookmark.
-- Cover art is intentionally omitted throughout the interface.
-- Ebook reading, cloud synchronization, metadata editing, and podcast-specific features are not currently supported.
 
 ---
 
@@ -104,6 +102,19 @@ Audiobooks is a native Android application written in Kotlin using Jetpack Compo
 Its architecture is intentionally simple, with separate components responsible for local audiobook discovery, playback, progress persistence, and the interface.
 
 The UI is built on the Light SDK's design system (`sdk:ui`) and playback runs on the SDK's `LightAudioPlayer` (ExoPlayer). Audiobooks is a standalone Gradle project that consumes the SDK as an included build — see `settings.gradle.kts`. It is a **real LightOS tool**: the `:app` module is built with the SDK's tool plugin (launched from the LightOS toolbox), and the `:server` module is a plain companion app that hosts the SDK service, the local library scan, and the playback foreground service — the privileged work the tool plugin forbids in the tool itself. The tool is a thin UI over the companion, so background playback survives the tool closing.
+
+---
+
+# What the companion adds beyond the current LightOS SDK
+
+The tool talks to the companion over the SDK's binder using **media methods that are additive to the SDK** — they were added to `sdk:shared`'s `LightServiceMethod` and are implemented by the companion. The production LightOS server (`com.lightos`) does **not** implement these yet; the companion is the reference implementation, and the plan is for Light to ship the same surface so tools can target `com.lightos` directly. The companion provides:
+
+- **The media RPC surface** — `GetBooks`, `ScanLibrary`, `OpenBook`/`PlayBook`, `PausePlayback`, `SeekTo`, `SeekToPart`, `SetPlaybackSpeed`, `GetPlaybackState`, `GetAutoPlayNext`/`SetAutoPlayNext`, and `DeleteBook`.
+- **Library scanning** — a recursive scan of `/sdcard/Audiobooks/` (any depth) into single-file and folder books, with titles and chapter names read from embedded metadata (album/title tags) rather than file names.
+- **Continuous multi-part playback** — folder books play across all their files on a single global timeline, so seeking, progress, and chapter boundaries work book-wide rather than per file.
+- **Chapter-aware playback** — per-chapter seek, "Chapter N of M" tracking, and an optional Auto-Play "next chapter" toggle that pauses at chapter boundaries when off.
+- **Background playback** — a foreground `Service` plus a media session and media-button receiver for lockscreen/system controls. The tool plugin forbids foreground services in the tool, so the companion owns playback — background listening survives the tool closing (the same model as LightOS's own music and podcast tools).
+- **Persistent progress** — listening position, speed, and ordering survive restarts, stored per book.
 
 ---
 

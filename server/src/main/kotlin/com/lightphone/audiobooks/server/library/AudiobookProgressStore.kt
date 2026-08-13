@@ -217,9 +217,13 @@ object AudiobookProgressStore {
 
     private fun persistSnapshot(book: Audiobook, state: PlayerState, now: Long) {
         val existing = read(book.source, book.id)
-        val position = (state.positionSeconds * 1000).toLong().coerceAtLeast(0)
         val duration = (state.durationSeconds * 1000).toLong().coerceAtLeast(0)
+        var position = (state.positionSeconds * 1000).toLong().coerceAtLeast(0)
         val completed = duration > 0 && duration - position.coerceAtMost(duration) <= 30_000L
+        // A finished book stores exactly its full duration, so the library's
+        // percent reads 100% (the player-derived end position can otherwise
+        // land a hair short of the resolved duration).
+        if (completed) position = duration
         write(
             book.source,
             book.id,

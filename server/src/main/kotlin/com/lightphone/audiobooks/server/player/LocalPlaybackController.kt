@@ -69,6 +69,10 @@ object LocalPlaybackController {
         persistProgress()
         PlaybackForegroundService.update(appContext, false)
         player.stop()
+        // stop() keeps playWhenReady from whatever was playing before; an open
+        // must never auto-play the new book (only the explicit autoPlay path
+        // below may start it).
+        player.pause()
         activeBook = book
         val saved = AudiobookProgressStore.read(book.source, book.id)
         speed = saved.playbackSpeed.coerceIn(0.5f, 2f)
@@ -132,12 +136,16 @@ object LocalPlaybackController {
 
     fun play() {
         if (mutableState.value.readiness != PlayerReadiness.Ready) return
-        // An ended book restarts from the beginning, like the old MediaPlayer did.
+        // An ended book restarts from the beginning, like the old MediaPlayer
+        // did. Restart via seekTo(0): a full queue rewind to chapter 1 that
+        // also updates the state (title/position) and persisted progress —
+        // seeking only the current item would replay the last chapter and
+        // leave the UI showing stale chapter/percent.
         if (!player.isPlaying.value && player.durationMs.value > 0 &&
+            player.currentMediaItemIndex.value == partDurations.lastIndex &&
             player.positionMs.value >= player.durationMs.value - END_EPSILON_MILLISECONDS
         ) {
-            player.seekTo(0L)
-            pendingSeekMilliseconds = null
+            seekTo(0L)
         }
         player.play()
         PlaybackForegroundService.update(appContext, true)
@@ -171,6 +179,13 @@ object LocalPlaybackController {
         if (part.index != currentIndex) {
             repeat((part.index - currentIndex).coerceAtLeast(0)) { player.skipToNext() }
             repeat((currentIndex - part.index).coerceAtLeast(0)) { player.skipToPrevious() }
+            // With Auto-Play off, crossing into another chapter pauses there —
+            // a manual skip past a chapter end behaves like a natural chapter
+            // boundary instead of flowing into the next chapter.
+            if (!PlaybackSettingsStore.autoPlayNext) {
+                player.pause()
+                PlaybackForegroundService.update(appContext, false)
+            }
         }
         // Applied once the target item's duration resolves.
         pendingSeekMilliseconds = part.positionMilliseconds
@@ -181,7 +196,11 @@ object LocalPlaybackController {
             positionSeconds = target / 1000.0,
             currentPartIndex = part.index,
         )
-        persistProgress()
+        // Persist the seek target itself, not the player-derived position: the
+        // target item's duration is still resolving right after skipToNext, so
+        // the player-derived path would early-return and leave the *previous*
+        // chapter's position saved (a quick exit + reopen then resumes wrong).
+        persistProgress(target)
     }
 
     /** Jumps to the start of the given part (chapter), preserving play/pause state. */
@@ -197,14 +216,19 @@ object LocalPlaybackController {
         persistProgress()
     }
 
-    fun persistProgress() {
+    fun persistProgress(explicitPositionMilliseconds: Long? = null) {
         val book = activeBook ?: return
-        // Skip while the current queue item is unresolved: position and part
-        // index are unreliable, and a corrupt value persisted here once broke
-        // resume (book jumped to its last part).
-        if (!::player.isInitialized || player.durationMs.value == 0L) return
-        val position = currentGlobalPosition()
-            .takeIf { it > 0 } ?: (mutableState.value.positionSeconds * 1000).toLong()
+        // A manual seek target is authoritative even while the target item's
+        // duration is still resolving. The player-derived path, by contrast,
+        // is skipped while the current queue item is unresolved: position and
+        // part index are unreliable, and a corrupt value persisted here once
+        // broke resume (book jumped to its last part).
+        val position = explicitPositionMilliseconds
+            ?: currentGlobalPosition().takeIf { it > 0 }
+            ?: (mutableState.value.positionSeconds * 1000).toLong()
+        if (explicitPositionMilliseconds == null &&
+            (!::player.isInitialized || player.durationMs.value == 0L)
+        ) return
         val duration = totalDuration()
             .takeIf { it > 0 } ?: (mutableState.value.durationSeconds * 1000).toLong()
         AudiobookProgressStore.saveLocal(

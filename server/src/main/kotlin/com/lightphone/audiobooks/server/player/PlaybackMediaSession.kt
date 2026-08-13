@@ -18,7 +18,8 @@ import android.view.KeyEvent
  */
 object PlaybackMediaSession {
     private val actions = PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or
-        PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_SEEK_TO or
+        PlaybackState.ACTION_PLAY_PAUSE or
+        PlaybackState.ACTION_SEEK_TO or
         PlaybackState.ACTION_REWIND or PlaybackState.ACTION_FAST_FORWARD or
         PlaybackState.ACTION_SKIP_TO_NEXT or PlaybackState.ACTION_SKIP_TO_PREVIOUS
 

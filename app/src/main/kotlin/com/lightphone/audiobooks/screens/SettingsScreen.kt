@@ -87,14 +87,6 @@ class SettingsScreen(sealedActivity: SealedLightActivity) :
                     center = LightTopBarCenter.Text("Settings"),
                 )
                 Column(modifier = Modifier.weight(1f)) {
-                    LightText(
-                        text = "Scan Library",
-                        variant = LightTextVariant.Copy,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .lightClickable { openScanProgress() }
-                            .padding(horizontal = 24.dp, vertical = 14.dp),
-                    )
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -125,7 +117,7 @@ class SettingsScreen(sealedActivity: SealedLightActivity) :
                         Column {
                             LightText(
                                 text = "Auto-Play",
-                                variant = LightTextVariant.Copy,
+                                variant = LightTextVariant.Heading,
                             )
                             LightText(
                                 text = "next chapter",
@@ -135,6 +127,14 @@ class SettingsScreen(sealedActivity: SealedLightActivity) :
                             )
                         }
                     }
+                    LightText(
+                        text = "Scan Library Now",
+                        variant = LightTextVariant.Heading,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .lightClickable { openScanProgress() }
+                            .padding(horizontal = 24.dp, vertical = 14.dp),
+                    )
                 }
             }
         }

@@ -128,7 +128,14 @@ object MediaServiceMethods {
                 LightResult.ErrorCode.Unknown,
                 "book not found: $bookId",
             )
-        LocalPlaybackController.open(book, autoPlay = autoPlay)
+        // Pressing play on an already-open book must not re-open it: a re-open
+        // stops + re-queues, which resets the player position to 0 until the
+        // pending seek lands (the UI flashes 00:00) and adds needless lag.
+        if (LocalPlaybackController.isBookLoaded(bookId)) {
+            if (autoPlay) LocalPlaybackController.play()
+        } else {
+            LocalPlaybackController.open(book, autoPlay = autoPlay)
+        }
         if (partIndex > 0) {
             LocalPlaybackController.seekToPart(partIndex)
         }
@@ -242,7 +249,12 @@ object MediaServiceMethods {
                 id = book.id,
                 title = book.title,
                 author = book.author,
-                durationMs = book.durationMilliseconds,
+                // The persisted duration is the player-resolved timeline the
+                // position is measured against; using it as the denominator
+                // keeps percent consistent (a finished book reads 100% even
+                // when resolved durations differ slightly from metadata).
+                durationMs = stored.durationMilliseconds.takeIf { it > 0 }
+                    ?: book.durationMilliseconds,
                 progressMs = stored.positionMilliseconds,
                 partCount = book.parts.size.coerceAtLeast(1),
                 parts = book.parts.map { part ->

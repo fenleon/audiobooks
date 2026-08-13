@@ -59,10 +59,18 @@ class PlayerViewModel(
         super.onScreenShow(screen)
         if (!started) {
             started = true
-            // Open paused at the saved position; playback starts only on an explicit play.
-            viewModelScope.launch { MediaClient.open(book.id) }
+            // Show a loading state instead of the previously-loaded book while
+            // the new book opens (open() blocks the server's main thread), and
+            // only start polling once it has — a poll racing ahead of open()
+            // returns the previous book's state.
+            state.value = null
+            viewModelScope.launch {
+                MediaClient.open(book.id)
+                startPolling()
+            }
+        } else {
+            startPolling()
         }
-        startPolling()
     }
 
     override fun onScreenHide(screen: SimpleLightScreen<Unit>) {
@@ -106,10 +114,13 @@ class PlayerViewModel(
     }
 
     fun seekToFraction(fraction: Float) {
-        val duration = state.value?.durationMs ?: return
+        val state = state.value ?: return
+        val chapter = chapterTime(book, state)
+        val start = chapter?.startMs ?: 0L
+        val duration = chapter?.durationMs ?: state.durationMs
         if (duration <= 0) return
         viewModelScope.launch {
-            MediaClient.seekTo((duration * fraction.coerceIn(0f, 1f)).toLong())
+            MediaClient.seekTo(start + (duration * fraction.coerceIn(0f, 1f)).toLong())
         }
     }
 
@@ -156,7 +167,7 @@ class PlayerScreen(
                     val playback = state
                     if (playback == null) {
                         LightText(
-                            text = "Connecting to the Audiobooks server…",
+                            text = "Loading…",
                             variant = LightTextVariant.Copy,
                             lighten = true,
                             modifier = Modifier.padding(24.dp),
@@ -164,6 +175,7 @@ class PlayerScreen(
                     } else {
                         PlayerContent(
                             state = playback,
+                            chapter = chapterTime(book, playback),
                             showSkips = hasPlayed,
                             themeColors = themeColors,
                             onBack15 = { viewModel.seekBy(-15_000) },
@@ -221,6 +233,7 @@ class PlayerScreen(
 @Composable
 private fun PlayerContent(
     state: LightServiceMethod.GetPlaybackState.Response,
+    chapter: ChapterTime?,
     showSkips: Boolean,
     themeColors: com.thelightphone.sdk.ui.LightColors,
     onBack15: () -> Unit,
@@ -228,8 +241,10 @@ private fun PlayerContent(
     onTogglePlay: () -> Unit,
     onSeekFraction: (Float) -> Unit,
 ) {
-    val progress = if (state.durationMs > 0) {
-        state.positionMs.toFloat() / state.durationMs
+    val position = chapter?.positionMs ?: state.positionMs
+    val duration = chapter?.durationMs ?: state.durationMs
+    val progress = if (duration > 0) {
+        position.toFloat() / duration
     } else {
         0f
     }
@@ -280,12 +295,12 @@ private fun PlayerContent(
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             LightText(
-                text = formatTime(state.positionMs),
+                text = formatTime(position),
                 variant = LightTextVariant.Fine,
                 lighten = true,
             )
             LightText(
-                text = formatTime(state.durationMs),
+                text = formatTime(duration),
                 variant = LightTextVariant.Fine,
                 lighten = true,
             )
@@ -331,7 +346,31 @@ private fun TransportButton(
 ) {
     LightIcon(
         icon = icon,
+        size = 3f,
         modifier = Modifier.lightClickable(onClick = onClick),
         contentDescription = description,
+    )
+}
+
+/** The current chapter's start, duration, and position within it. */
+private data class ChapterTime(val startMs: Long, val durationMs: Long, val positionMs: Long)
+
+/**
+ * Maps the book-global playback state onto the current chapter, so the player
+ * shows chapter-scoped time and progress. Falls back to null (full-book
+ * values) when the book has no part durations — e.g. single-file books.
+ */
+private fun chapterTime(
+    book: LightServiceMethod.GetBooks.Book,
+    state: LightServiceMethod.GetPlaybackState.Response,
+): ChapterTime? {
+    val index = state.partIndex.coerceAtLeast(0)
+    val duration = book.parts.getOrNull(index)?.durationMs ?: return null
+    if (duration <= 0) return null
+    val start = book.parts.take(index).sumOf { it.durationMs.coerceAtLeast(0) }
+    return ChapterTime(
+        startMs = start,
+        durationMs = duration,
+        positionMs = (state.positionMs - start).coerceIn(0, duration),
     )
 }

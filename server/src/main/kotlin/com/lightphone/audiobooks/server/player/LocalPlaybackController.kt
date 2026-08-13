@@ -8,6 +8,7 @@ import com.lightphone.audiobooks.server.PlaybackForegroundService
 import com.lightphone.audiobooks.server.PlaybackSettingsStore
 import com.lightphone.audiobooks.server.library.Audiobook
 import com.lightphone.audiobooks.server.library.AudiobookProgressStore
+import com.lightphone.audiobooks.server.library.EmbeddedChapter
 import com.thelightphone.sdk.audio.LightAudioItem
 import com.thelightphone.sdk.audio.LightAudioPlayer
 import com.thelightphone.sdk.audio.LightAudioSource
@@ -41,6 +42,8 @@ object LocalPlaybackController {
     private var pendingSeekMilliseconds: Long? = null
     private var silentFailureStreak = 0
     private var lastPartIndex = -1
+    private var lastChapterPartIndex = -1
+    private var lastChapterIndex = -1
 
     val state: StateFlow<PlayerState> = mutableState.asStateFlow()
 
@@ -129,6 +132,13 @@ object LocalPlaybackController {
                 readiness = PlayerReadiness.Error,
             )
         }
+        // Seed the embedded-chapter tracker at the resume position so the
+        // auto-play-off boundary pause never fires spuriously on the first poll.
+        lastChapterPartIndex = startPart
+        lastChapterIndex = chapterIndexAt(
+            chaptersForPart(startPart),
+            pendingSeekMilliseconds ?: 0L,
+        )
         updateState()
         if (autoPlay) play()
         scheduleUpdates()
@@ -192,6 +202,13 @@ object LocalPlaybackController {
         // A manual seek is not a natural part boundary; keep the boundary
         // tracker in sync so it only fires on real queue advancement.
         lastPartIndex = part.index
+        // Same for the embedded-chapter tracker: a seek into a later chapter
+        // must not look like a natural chapter crossing.
+        lastChapterPartIndex = part.index
+        lastChapterIndex = chapterIndexAt(
+            chaptersForPart(part.index),
+            part.positionMilliseconds,
+        )
         mutableState.value = mutableState.value.copy(
             positionSeconds = target / 1000.0,
             currentPartIndex = part.index,
@@ -248,6 +265,8 @@ object LocalPlaybackController {
         partDurations = LongArray(0)
         pendingSeekMilliseconds = null
         lastPartIndex = -1
+        lastChapterPartIndex = -1
+        lastChapterIndex = -1
         mutableState.value = PlayerState(
             diagnostic = "No audiobook loaded",
             readiness = PlayerReadiness.Unavailable,
@@ -301,6 +320,25 @@ object LocalPlaybackController {
                 PlaybackForegroundService.update(appContext, false)
             }
             lastPartIndex = index
+            // With Auto-Play off, also pause when playback crosses an embedded
+            // chapter end inside the current file (a natural chapter boundary,
+            // same semantics as a part ending). Re-seed the tracker whenever
+            // the current part changes.
+            if (player.isPlaying.value && !PlaybackSettingsStore.autoPlayNext) {
+                if (index != lastChapterPartIndex) {
+                    lastChapterPartIndex = index
+                    lastChapterIndex = chapterIndexAt(chaptersForPart(index), player.positionMs.value)
+                }
+                val chapters = chaptersForPart(index)
+                if (chapters.isNotEmpty() && lastChapterIndex >= 0) {
+                    val currentChapter = chapterIndexAt(chapters, player.positionMs.value)
+                    if (currentChapter > lastChapterIndex) {
+                        player.pause()
+                        PlaybackForegroundService.update(appContext, false)
+                    }
+                    lastChapterIndex = currentChapter
+                }
+            }
             updateState()
             val playing = player.isPlaying.value
             if (playing && System.currentTimeMillis() - lastSavedAt >= PROGRESS_SAVE_INTERVAL_MILLISECONDS) {
@@ -343,5 +381,16 @@ object LocalPlaybackController {
         val index = player.currentMediaItemIndex.value.coerceAtLeast(0)
         val within = player.positionMs.value
         return globalPartPosition(index, within, partDurations)
+    }
+
+    /** Embedded chapters of the given part (single-file books with embedded chapters). */
+    private fun chaptersForPart(index: Int): List<EmbeddedChapter> =
+        activeBook?.parts?.getOrNull(index)?.chapters.orEmpty()
+
+    /** Index of the chapter containing [positionMs] (an offset within the part). */
+    private fun chapterIndexAt(chapters: List<EmbeddedChapter>, positionMs: Long): Int {
+        if (chapters.isEmpty()) return -1
+        val index = chapters.indexOfFirst { positionMs < it.endMs }
+        return if (index >= 0) index else chapters.lastIndex
     }
 }

@@ -18,9 +18,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
 import com.lightphone.audiobooks.MediaClient
+import com.lightphone.audiobooks.chapterIndexAt
 import com.lightphone.audiobooks.chapterLabel
+import com.lightphone.audiobooks.embeddedChapters
 import com.lightphone.audiobooks.formatSpeed
 import com.lightphone.audiobooks.formatTime
+import com.lightphone.audiobooks.partStartMs
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
@@ -113,6 +116,11 @@ class PlayerViewModel(
         viewModelScope.launch { MediaClient.seekTo(current + deltaMilliseconds) }
     }
 
+    /** Seeks on the book's global timeline (embedded-chapter jumps land here). */
+    fun seekTo(positionMs: Long) {
+        viewModelScope.launch { MediaClient.seekTo(positionMs) }
+    }
+
     fun seekToFraction(fraction: Float) {
         val state = state.value ?: return
         val chapter = chapterTime(book, state)
@@ -149,6 +157,7 @@ class PlayerScreen(
         val state by viewModel.state.collectAsState()
         val hasPlayed by viewModel.hasPlayed.collectAsState()
         val themeColors by LightThemeController.colors.collectAsState()
+        val chapters = embeddedChapters(book)
 
         LightTheme(colors = themeColors) {
             Column(
@@ -173,10 +182,21 @@ class PlayerScreen(
                             modifier = Modifier.padding(24.dp),
                         )
                     } else {
+                        val embeddedIndex = if (chapters.isNotEmpty()) {
+                            chapterIndexAt(
+                                chapters,
+                                (playback.positionMs - partStartMs(book, playback.partIndex.coerceAtLeast(0))).coerceAtLeast(0),
+                            )
+                        } else {
+                            playback.partIndex
+                        }
                         PlayerContent(
                             state = playback,
                             chapter = chapterTime(book, playback),
                             showSkips = hasPlayed,
+                            showChapter = playback.partCount > 1 || chapters.size > 1,
+                            chapterIndex = embeddedIndex,
+                            chapterCount = if (chapters.isNotEmpty()) chapters.size else playback.partCount,
                             themeColors = themeColors,
                             onBack15 = { viewModel.seekBy(-15_000) },
                             onForward15 = { viewModel.seekBy(15_000) },
@@ -198,8 +218,9 @@ class PlayerScreen(
                                 text = formatSpeed(state!!.speed),
                                 onClick = { openSpeedPicker() },
                             ),
-                            // Chapters exist only for multi-part (folder) books.
-                            if (state!!.partCount > 1) LightBarButton.LightIcon(
+                            // Chapters exist for multi-part (folder) books, or
+                            // single-file books with embedded chapters.
+                            if (state!!.partCount > 1 || chapters.size > 1) LightBarButton.LightIcon(
                                 icon = LightIcons.LIST,
                                 onClick = { openChapters() },
                                 contentDescription = "Chapters",
@@ -225,7 +246,15 @@ class PlayerScreen(
 
     private fun openChapters() {
         navigateTo(screenFactory = { ChaptersPickerScreen(it, book) }) { index ->
-            viewModel.seekToPart(index)
+            val chapters = embeddedChapters(book)
+            if (chapters.isNotEmpty()) {
+                // Embedded-chapter books are single-part today, so the flat
+                // chapter index maps straight to a start offset that is already
+                // the global seek target.
+                viewModel.seekTo(chapters[index].startMs)
+            } else {
+                viewModel.seekToPart(index)
+            }
         }
     }
 }
@@ -235,6 +264,9 @@ private fun PlayerContent(
     state: LightServiceMethod.GetPlaybackState.Response,
     chapter: ChapterTime?,
     showSkips: Boolean,
+    showChapter: Boolean,
+    chapterIndex: Int,
+    chapterCount: Int,
     themeColors: com.thelightphone.sdk.ui.LightColors,
     onBack15: () -> Unit,
     onForward15: () -> Unit,
@@ -272,9 +304,9 @@ private fun PlayerContent(
                     .padding(top = 2.dp),
             )
         }
-        if (state.partCount > 1) {
+        if (showChapter) {
             LightText(
-                text = chapterLabel(state.partIndex, state.partCount),
+                text = chapterLabel(chapterIndex, chapterCount),
                 variant = LightTextVariant.Detail,
                 lighten = true,
                 align = TextAlign.Center,
@@ -357,17 +389,31 @@ private data class ChapterTime(val startMs: Long, val durationMs: Long, val posi
 
 /**
  * Maps the book-global playback state onto the current chapter, so the player
- * shows chapter-scoped time and progress. Falls back to null (full-book
- * values) when the book has no part durations — e.g. single-file books.
+ * shows chapter-scoped time and progress. Embedded chapters (single-file
+ * books) scope to the chapter containing the position; folder books scope to
+ * the current part. Returns null (full-book values) when the book has no part
+ * durations — e.g. single-file books without embedded chapters.
  */
 private fun chapterTime(
     book: LightServiceMethod.GetBooks.Book,
     state: LightServiceMethod.GetPlaybackState.Response,
 ): ChapterTime? {
     val index = state.partIndex.coerceAtLeast(0)
-    val duration = book.parts.getOrNull(index)?.durationMs ?: return null
+    val part = book.parts.getOrNull(index) ?: return null
+    val start = partStartMs(book, index)
+    val chapters = part.chapters
+    if (chapters.isNotEmpty()) {
+        val positionInPart = (state.positionMs - start).coerceAtLeast(0)
+        val current = chapters.firstOrNull { positionInPart < it.endMs } ?: chapters.last()
+        val duration = (current.endMs - current.startMs).coerceAtLeast(0)
+        return ChapterTime(
+            startMs = start + current.startMs,
+            durationMs = duration,
+            positionMs = (positionInPart - current.startMs).coerceIn(0, duration),
+        )
+    }
+    val duration = part.durationMs
     if (duration <= 0) return null
-    val start = book.parts.take(index).sumOf { it.durationMs.coerceAtLeast(0) }
     return ChapterTime(
         startMs = start,
         durationMs = duration,

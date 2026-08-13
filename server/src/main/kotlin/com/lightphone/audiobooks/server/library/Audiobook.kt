@@ -4,11 +4,22 @@ enum class AudiobookSource {
     Local,
 }
 
+/** One embedded chapter (MP3 CHAP frame / M4B bookmark) within a part. */
+data class EmbeddedChapter(
+    val title: String,
+    /** Start offset within the part, milliseconds. */
+    val startMs: Long,
+    /** End offset within the part, milliseconds (open-ended chapters are resolved to the next chapter's start or the part duration). */
+    val endMs: Long,
+)
+
 /** One physical audio file within a multi-file audiobook (a folder book). */
 data class AudiobookPart(
     val playbackReference: String,
     val durationMilliseconds: Long,
     val title: String = "",
+    /** Embedded chapters parsed from this file (empty for folder-book parts — file-per-chapter stays). */
+    val chapters: List<EmbeddedChapter> = emptyList(),
 )
 
 data class Audiobook(

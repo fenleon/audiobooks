@@ -60,4 +60,5 @@ dependencies {
     implementation(libs.sdk.ui)       // Light design system for the status screen
     implementation(libs.compose.activity)
     implementation(libs.kotlinx.coroutines)
+    testImplementation(libs.junit)
 }

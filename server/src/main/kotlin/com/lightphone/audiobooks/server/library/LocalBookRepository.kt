@@ -12,6 +12,8 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.util.Log
+import com.lightphone.audiobooks.server.library.chapters.Id3v2ChapterParser
+import com.lightphone.audiobooks.server.library.chapters.Mp4ChapterParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -219,6 +221,7 @@ object LocalBookRepository {
                                 stored = stored,
                                 duration = duration,
                                 fileSizeBytes = size,
+                                chapters = readEmbeddedChapters(uri, isM4b, duration),
                             )
                         } else {
                             folderParts.getOrPut(folderPath) { linkedMapOf() }[displayName.lowercase()] =
@@ -249,6 +252,7 @@ object LocalBookRepository {
                         val duration = embedded.durationMilliseconds.takeIf { it > 0 }
                             ?: stored.durationMilliseconds.takeIf { it > 0 }
                             ?: 0L
+                        val isM4b = displayName.endsWith(".m4b", true)
                         accepted[stableId] = audiobookFrom(
                             stableId = stableId,
                             displayName = displayName,
@@ -257,6 +261,7 @@ object LocalBookRepository {
                             stored = stored,
                             duration = duration,
                             fileSizeBytes = querySize(uri),
+                            chapters = readEmbeddedChapters(uri, isM4b, duration),
                         )
                     } else {
                         folderParts.getOrPut(folderPath) { linkedMapOf() }[displayName.lowercase()] =
@@ -356,6 +361,7 @@ object LocalBookRepository {
         stored: AudiobookProgress,
         duration: Long,
         fileSizeBytes: Long,
+        chapters: List<EmbeddedChapter> = emptyList(),
     ): Audiobook = Audiobook(
         id = stableId,
         source = AudiobookSource.Local,
@@ -371,7 +377,29 @@ object LocalBookRepository {
         lastPlayedAtMilliseconds = stored.lastPlayedAtMilliseconds,
         lastUpdatedAtMilliseconds = stored.lastUpdatedAtMilliseconds,
         fileSizeBytes = fileSizeBytes,
+        // A single-file book with embedded chapters gets one part carrying them,
+        // so chapter navigation, "Chapter N of M", chapter-scoped time, and the
+        // auto-play-off boundary pause work off the file's own chapters.
+        parts = if (chapters.isEmpty()) emptyList() else listOf(
+            AudiobookPart(
+                playbackReference = uri.toString(),
+                durationMilliseconds = duration,
+                chapters = chapters,
+            ),
+        ),
     )
+
+    /** Parses embedded chapters (MP3 CHAP / M4B bookmarks) for a single-file book. */
+    private fun readEmbeddedChapters(uri: Uri, isM4b: Boolean, durationMs: Long): List<EmbeddedChapter> =
+        runCatching {
+            appContext.contentResolver.openInputStream(uri)?.use { input ->
+                if (isM4b) {
+                    Mp4ChapterParser.parse(input, durationMs)
+                } else {
+                    Id3v2ChapterParser.parse(input, durationMs)
+                }
+            } ?: emptyList()
+        }.getOrDefault(emptyList())
 
     private fun querySize(uri: Uri): Long = runCatching {
         appContext.contentResolver.query(

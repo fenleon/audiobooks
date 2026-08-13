@@ -54,7 +54,7 @@ Audiobooks plays audiobooks stored on your device, without a cloud account or su
 
 - Single-file audiobooks
 - Multi-file audiobooks organized as folders, played continuously in filename order
-- Chapter list per multi-file book (titles from embedded metadata), with per-chapter seek
+- Chapter list with per-chapter seek — folder books use their files, single-file books use their embedded chapters (MP3 chapter tags, M4B bookmarks)
 - Chapter-scoped time and progress in the player; whole-book percent in the library
 - Playback speed (0.5x–2x), with an optional Auto-Play "next chapter" toggle
 - Persistent listening progress across the entire book
@@ -91,7 +91,6 @@ Audiobooks is currently designed for the Light Phone III and Android 13 or newer
 Current limitations include:
 
 - Multi-file local audiobooks play in filename order; chapter titles come from embedded metadata (fallback: file name).
-- Embedded chapter metadata (MP3 chapter tags, M4B bookmarks) is not parsed — chapter navigation works per-file (folder books), not per embedded bookmark.
 
 ---
 
@@ -112,7 +111,7 @@ The tool talks to the companion over the SDK's binder using **media methods that
 - **The media RPC surface** — `GetBooks`, `ScanLibrary`, `OpenBook`/`PlayBook`, `PausePlayback`, `SeekTo`, `SeekToPart`, `SetPlaybackSpeed`, `GetPlaybackState`, `GetAutoPlayNext`/`SetAutoPlayNext`, and `DeleteBook`.
 - **Library scanning** — a recursive scan of `/sdcard/Audiobooks/` (any depth) into single-file and folder books, with titles and chapter names read from embedded metadata (album/title tags) rather than file names.
 - **Continuous multi-part playback** — folder books play across all their files on a single global timeline, so seeking, progress, and chapter boundaries work book-wide rather than per file.
-- **Chapter-aware playback** — per-chapter seek, "Chapter N of M" tracking, and an optional Auto-Play "next chapter" toggle that pauses at chapter boundaries when off.
+- **Chapter-aware playback** — per-chapter seek, "Chapter N of M" tracking, and an optional Auto-Play "next chapter" toggle that pauses at chapter boundaries when off. Single-file books read their own embedded chapters (MP3 CHAP frames, M4B bookmarks) for the same experience folder books get per file.
 - **Background playback** — a foreground `Service` plus a media session and media-button receiver for lockscreen/system controls. The tool plugin forbids foreground services in the tool, so the companion owns playback — background listening survives the tool closing (the same model as LightOS's own music and podcast tools).
 - **Persistent progress** — listening position, speed, and ordering survive restarts, stored per book.
 
@@ -160,7 +159,6 @@ While listening, Audiobooks runs a foreground service so playback continues when
 Planned improvements include:
 
 - In-app library management (remove books)
-- Embedded chapter metadata (MP3 chapter tags, M4B bookmarks)
 - Additional playback refinements
 - Performance and stability improvements
 

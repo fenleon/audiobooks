@@ -261,6 +261,13 @@ object MediaServiceMethods {
                     LightServiceMethod.GetBooks.Part(
                         title = part.title,
                         durationMs = part.durationMilliseconds,
+                        chapters = part.chapters.map { chapter ->
+                            LightServiceMethod.GetBooks.Chapter(
+                                title = chapter.title,
+                                startMs = chapter.startMs,
+                                endMs = chapter.endMs,
+                            )
+                        },
                     )
                 },
             )

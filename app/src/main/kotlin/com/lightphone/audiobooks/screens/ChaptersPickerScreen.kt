@@ -14,7 +14,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
 import com.lightphone.audiobooks.MediaClient
+import com.lightphone.audiobooks.chapterIndexAt
+import com.lightphone.audiobooks.embeddedChapters
 import com.lightphone.audiobooks.formatTime
+import com.lightphone.audiobooks.partStartMs
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
@@ -38,12 +41,22 @@ class ChaptersPickerViewModel(
     private val book: LightServiceMethod.GetBooks.Book,
 ) : LightViewModel<Int>() {
 
-    val currentPart = MutableStateFlow(0)
+    /** The current entry (embedded-chapter or part index), highlighted in the list. */
+    val currentIndex = MutableStateFlow(0)
 
     override fun onScreenShow(screen: SimpleLightScreen<Int>) {
         super.onScreenShow(screen)
         viewModelScope.launch {
-            currentPart.value = MediaClient.playbackState()?.partIndex ?: 0
+            val state = MediaClient.playbackState()
+            val chapters = embeddedChapters(book)
+            currentIndex.value = when {
+                state == null -> 0
+                chapters.isNotEmpty() -> chapterIndexAt(
+                    chapters,
+                    (state.positionMs - partStartMs(book, state.partIndex.coerceAtLeast(0))).coerceAtLeast(0),
+                )
+                else -> state.partIndex
+            }
         }
     }
 }
@@ -65,8 +78,9 @@ class ChaptersPickerScreen(
 
     @Composable
     override fun Content() {
-        val currentPart by viewModel.currentPart.collectAsState()
+        val currentIndex by viewModel.currentIndex.collectAsState()
         val themeColors by LightThemeController.colors.collectAsState()
+        val chapters = embeddedChapters(book)
 
         LightTheme(colors = themeColors) {
             Column(
@@ -83,31 +97,61 @@ class ChaptersPickerScreen(
                     center = LightTopBarCenter.Text("Chapters"),
                 )
                 LightScrollView {
-                    book.parts.forEachIndexed { index, part ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .lightClickable { goBack(index) }
-                                .padding(horizontal = 24.dp, vertical = 14.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            LightText(
-                                text = part.title.ifBlank { "Chapter ${index + 1}" },
-                                variant = LightTextVariant.Copy,
-                                lighten = index != currentPart,
-                                modifier = Modifier.weight(1f),
+                    // Embedded chapters (single-file books) list the file's own
+                    // chapters; folder books list their parts. Both return the
+                    // tapped index, which the player resolves to a seek.
+                    if (chapters.isNotEmpty()) {
+                        chapters.forEachIndexed { index, chapter ->
+                            val duration = (chapter.endMs - chapter.startMs).coerceAtLeast(0)
+                            ChapterRow(
+                                title = chapter.title.ifBlank { "Chapter ${index + 1}" },
+                                durationMs = duration,
+                                isCurrent = index == currentIndex,
+                                onClick = { goBack(index) },
                             )
-                            if (part.durationMs > 0) {
-                                LightText(
-                                    text = formatTime(part.durationMs),
-                                    variant = LightTextVariant.Fine,
-                                    lighten = true,
-                                )
-                            }
+                        }
+                    } else {
+                        book.parts.forEachIndexed { index, part ->
+                            ChapterRow(
+                                title = part.title.ifBlank { "Chapter ${index + 1}" },
+                                durationMs = part.durationMs,
+                                isCurrent = index == currentIndex,
+                                onClick = { goBack(index) },
+                            )
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ChapterRow(
+    title: String,
+    durationMs: Long,
+    isCurrent: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .lightClickable(onClick = onClick)
+            .padding(horizontal = 24.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        LightText(
+            text = title,
+            variant = LightTextVariant.Copy,
+            lighten = !isCurrent,
+            modifier = Modifier.weight(1f),
+        )
+        if (durationMs > 0) {
+            LightText(
+                text = formatTime(durationMs),
+                variant = LightTextVariant.Fine,
+                lighten = true,
+            )
         }
     }
 }

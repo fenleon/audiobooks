@@ -16,7 +16,7 @@ Audiobooks is currently in **beta**. It is suitable for daily use; features and 
 
 > **Current Status:** Beta
 >
-> **Current Version:** 0.3.0 (versionCode 13)
+> **Current Version:** 0.4.0 (versionCode 14)
 
 > **About the name:** the app is called *Audiobooks* — a plain, descriptive
 > name in the Light Phone tool-naming style. Application IDs:

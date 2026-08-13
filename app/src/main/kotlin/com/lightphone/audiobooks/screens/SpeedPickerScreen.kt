@@ -80,7 +80,9 @@ class SpeedPickerScreen(sealedActivity: SealedLightActivity) :
                     viewModel.speeds.forEach { speed ->
                         LightText(
                             text = formatSpeed(speed),
-                            variant = LightTextVariant.Copy,
+                            // Heading = the settings row size; matches the
+                            // podcast player's speed panel text.
+                            variant = LightTextVariant.Heading,
                             lighten = speed != current,
                             modifier = Modifier
                                 .fillMaxWidth()

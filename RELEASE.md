@@ -102,10 +102,10 @@ adb shell pm grant com.lightphone.audiobooks android.permission.READ_MEDIA_AUDIO
 
 ## Smoke-test checklist
 
-- Open Settings and confirm Version shows the expected release.
 - Open a book, play, seek ±15 seconds, scrub, and change speed from the panel.
 - Open a folder book with several chapter files; confirm playback continues
-  across part boundaries and the chapter list can jump to any part.
+  across part boundaries, the chapter list can jump to any part, and the
+  player's time row is scoped to the current chapter.
 - Press play, leave the app, and confirm background listening continues
   (notification on `audiobooks_playback`, position advances).
 - Press play and check the lockscreen/system media panel: seek bar, play/pause,
@@ -117,8 +117,9 @@ adb shell pm grant com.lightphone.audiobooks android.permission.READ_MEDIA_AUDIO
 ## Known limitations
 
 - Multi-file books play in filename order; the player shows "Chapter N of M"
-  and tapping it opens a chapter list.
-- Embedded chapter metadata (MP3 chapter tags, M4B bookmarks) is not exposed.
+  and tapping it opens a chapter list (titles from embedded metadata).
+- Embedded chapter metadata (MP3 chapter tags, M4B bookmarks) is not parsed —
+  chapter navigation is per-file (folder books) only.
 - No cover art, ebook reading, or cloud sync; books must be on the device in
   `/sdcard/Audiobooks/`.
 - The debug/release APK is large (media3 + sdk:client transitive deps); a

@@ -8,11 +8,15 @@ Instead of treating audiobooks as another streaming platform, Audiobooks treats 
 
 There are no recommendations, storefronts, advertisements, social features, or cover art—just your books.
 
-Audiobooks is currently in **alpha**. While it is already suitable for daily use, features and behavior may continue to evolve before a stable release.
+Built with the Light ethos: **stripped back, calm, and intentionally small**. Books load from the device — a single shared folder, no accounts, no cloud. Audiobooks is a **real LightOS tool**: a thin interface built on the Light SDK design system, with a companion app hosting the on-device library, scanning, and playback — the same tool + companion architecture Light's own music and podcast tools use, so background listening survives the tool closing.
 
-> **Current Status:** Alpha
+**Heritage:** Audiobooks began as a fork of [Bard](https://github.com/sjkornelsen/bard) by sjkornelsen, rebuilt around local-only playback.
+
+Audiobooks is currently in **beta**. It is suitable for daily use; features and behavior may still evolve before a stable release.
+
+> **Current Status:** Beta
 >
-> **Current Version:** 0.1.0 (versionCode 11)
+> **Current Version:** 0.3.0 (versionCode 13)
 
 > **About the name:** the app is called *Audiobooks* — a plain, descriptive
 > name in the Light Phone tool-naming style. Application IDs:
@@ -23,12 +27,12 @@ Audiobooks is currently in **alpha**. While it is already suitable for daily use
 
 # Screenshots
 
-The library, player, and settings on the LightOS emulator (light-on-black, like the device):
+The library, player, chapter list, settings, and speed picker on a Light Phone III (light-on-black):
 
 <p align="center">
   <img src="screenshots/library.png" width="32%" alt="Library" />
-  <img src="screenshots/edit.png" width="32%" alt="Edit mode" />
   <img src="screenshots/player.png" width="32%" alt="Player" />
+  <img src="screenshots/chapters.png" width="32%" alt="Chapters" />
   <img src="screenshots/settings.png" width="32%" alt="Settings" />
   <img src="screenshots/speed.png" width="32%" alt="Playback speed" />
 </p>
@@ -49,9 +53,10 @@ Audiobooks plays audiobooks stored on your device, without a cloud account or su
 ### Features
 
 - Single-file audiobooks
-- Multi-file audiobooks organized as folders
-- Continuous playback across multiple files
-- Combined timeline and duration
+- Multi-file audiobooks organized as folders, played continuously in filename order
+- Chapter list per multi-file book (titles from embedded metadata), with per-chapter seek
+- Chapter-scoped time and progress in the player; whole-book percent in the library
+- Playback speed (0.5x–2x), with an optional Auto-Play "next chapter" toggle
 - Persistent listening progress across the entire book
 - Resume playback
 - Recent-first library ordering
@@ -73,7 +78,7 @@ Audiobooks scans the shared `Audiobooks` folder at any depth. Individual .mp3 an
 
 Files are played in alphabetical order, so numbering them (01, 02, 03, …) is recommended.
 
-4. In Audiobooks, open the app — the library lists every book found in the folder (tap the settings icon in the library's top bar to rescan).
+4. In Audiobooks, open the app — the library lists every book found in the folder (tap the settings icon in the library's bottom bar, then "Scan Library Now", to rescan).
 
 Android may request permission to read your audio library. Audiobooks does **not** request broad "All Files" storage access.
 
@@ -85,8 +90,8 @@ Audiobooks is currently designed for the Light Phone III and Android 13 or newer
 
 Current limitations include:
 
-- Multi-file local audiobooks are played in filename order. Chapter metadata within multi-file books is not yet exposed in the interface.
-- Embedded chapter navigation is not supported.
+- Multi-file local audiobooks play in filename order; chapter titles come from embedded metadata (fallback: file name).
+- Embedded chapter metadata (MP3 chapter tags, M4B bookmarks) is not parsed — chapter navigation works per-file (folder books), not per embedded bookmark.
 - Cover art is intentionally omitted throughout the interface.
 - Ebook reading, cloud synchronization, metadata editing, and podcast-specific features are not currently supported.
 
@@ -143,7 +148,8 @@ While listening, Audiobooks runs a foreground service so playback continues when
 
 Planned improvements include:
 
-- Chapter navigation
+- In-app library management (remove books)
+- Embedded chapter metadata (MP3 chapter tags, M4B bookmarks)
 - Additional playback refinements
 - Performance and stability improvements
 

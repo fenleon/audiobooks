@@ -274,8 +274,14 @@ object LocalBookRepository {
                     }
                 }
                 folderParts.forEach { (folderPath, candidatesByPath) ->
+                    // Part order: disc/track tags when present (absent sorts
+                    // last), then natural filename order ("ch2" < "ch10").
                     val ordered = candidatesByPath.values.sortedWith(
-                        compareBy(String.CASE_INSENSITIVE_ORDER) { it.displayName },
+                        compareBy<LocalPartCandidate> {
+                            it.embedded.discNumber.takeIf { n -> n > 0 } ?: Int.MAX_VALUE
+                        }.thenBy {
+                            it.embedded.trackNumber.takeIf { n -> n > 0 } ?: Int.MAX_VALUE
+                        }.thenComparator { a, b -> naturalOrder(a.displayName, b.displayName) },
                     )
                     val stableId = "folder:${folderPath.normalizedFolderHash()}"
                     val stored = AudiobookProgressStore.read(AudiobookSource.Local, stableId)
@@ -426,8 +432,13 @@ object LocalBookRepository {
             val album = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM).orEmpty().trim()
             val duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
                 ?.toLongOrNull() ?: 0L
+            // Track/disc tags ("3" or "3/12") order folder-book parts.
+            val trackNumber = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
+                ?.substringBefore('/')?.trim()?.toIntOrNull() ?: 0
+            val discNumber = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DISC_NUMBER)
+                ?.substringBefore('/')?.trim()?.toIntOrNull() ?: 0
             Log.d(TAG, "metadata available=${title.isNotBlank() || author.isNotBlank()}")
-            EmbeddedMetadata(title, author, album, duration)
+            EmbeddedMetadata(title, author, album, duration, trackNumber, discNumber)
         } catch (_: Exception) {
             EmbeddedMetadata()
         } finally {
@@ -485,5 +496,42 @@ object LocalBookRepository {
         val author: String = "",
         val album: String = "",
         val durationMilliseconds: Long = 0,
+        /** CD track number (0 when absent) — folder-book part ordering. */
+        val trackNumber: Int = 0,
+        /** CD disc number (0 when absent) — folder-book part ordering. */
+        val discNumber: Int = 0,
     )
+}
+
+/**
+ * Case-insensitive natural order: numeric runs compare by value, so
+ * "ch2" < "ch10" and "part 1" < "part 2" regardless of zero-padding.
+ */
+internal fun naturalOrder(a: String, b: String): Int {
+    var i = 0
+    var j = 0
+    while (i < a.length && j < b.length) {
+        val ca = a[i].lowercaseChar()
+        val cb = b[j].lowercaseChar()
+        if (ca.isDigit() && cb.isDigit()) {
+            var endA = i
+            while (endA < a.length && a[endA].isDigit()) endA++
+            var endB = j
+            while (endB < b.length && b[endB].isDigit()) endB++
+            val digitsA = a.substring(i, endA).trimStart('0')
+            val digitsB = b.substring(j, endB).trimStart('0')
+            val byLength = digitsA.length.compareTo(digitsB.length)
+            if (byLength != 0) return byLength
+            val byDigits = digitsA.compareTo(digitsB)
+            if (byDigits != 0) return byDigits
+            i = endA
+            j = endB
+        } else {
+            val cmp = ca.compareTo(cb)
+            if (cmp != 0) return cmp
+            i++
+            j++
+        }
+    }
+    return (a.length - i) - (b.length - j)
 }

@@ -120,7 +120,8 @@ adb shell pm grant com.lightphone.audiobooks android.permission.READ_MEDIA_AUDIO
 
 ## Known limitations
 
-- Multi-file books play in filename order; the player shows "Chapter N of M"
+- Multi-file books play in embedded track order (disc/track tags, fallback:
+  natural filename order); the player shows "Chapter N of M"
   and tapping it opens a chapter list (titles from embedded metadata).
 - Embedded chapters inside a folder book's individual files are not merged —
   folder books stay file-per-chapter; single-file books do read their embedded

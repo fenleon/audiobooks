@@ -53,7 +53,7 @@ Audiobooks plays audiobooks stored on your device, without a cloud account or su
 ### Features
 
 - Single-file audiobooks
-- Multi-file audiobooks organized as folders, played continuously in filename order
+- Multi-file audiobooks organized as folders, played continuously in embedded track order (disc/track tags, fallback: natural filename order)
 - Chapter list with per-chapter seek — folder books use their files, single-file books use their embedded chapters (MP3 chapter tags, M4B bookmarks)
 - Chapter-scoped time and progress in the player; whole-book percent in the library
 - Playback speed (0.5x–2x), with an optional Auto-Play "next chapter" toggle
@@ -90,7 +90,7 @@ Audiobooks is currently designed for the Light Phone III and Android 13 or newer
 
 Current limitations include:
 
-- Multi-file local audiobooks play in filename order; chapter titles come from embedded metadata (fallback: file name).
+- Multi-file local audiobooks play in embedded track order (disc/track tags, fallback: natural filename order); chapter titles come from embedded metadata (fallback: file name).
 
 ---
 

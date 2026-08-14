@@ -16,7 +16,7 @@ Audiobooks is currently in **beta**. It is suitable for daily use; features and 
 
 > **Current Status:** Beta
 >
-> **Current Version:** 0.4.0 (versionCode 14)
+> **Current Version:** 0.5.0 (versionCode 15)
 
 > **About the name:** the app is called *Audiobooks* — a plain, descriptive
 > name in the Light Phone tool-naming style. Application IDs:
@@ -91,6 +91,7 @@ Audiobooks is currently designed for the Light Phone III and Android 13 or newer
 Current limitations include:
 
 - Multi-file local audiobooks play in embedded track order (disc/track tags, fallback: natural filename order); chapter titles come from embedded metadata (fallback: file name).
+- Hardware volume buttons are not wired to playback volume yet (on the roadmap — see `WORKLOG.md`).
 
 ---
 

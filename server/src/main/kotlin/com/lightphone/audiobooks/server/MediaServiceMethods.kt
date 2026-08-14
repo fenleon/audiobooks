@@ -145,10 +145,22 @@ object MediaServiceMethods {
             if (positionMs > 0) {
                 LocalPlaybackController.seekTo(positionMs)
             }
+        } else {
+            // Opening a book's screen is still a preview (the companion keeps
+            // whatever is playing); the tool calls OpenBook only when the user
+            // acts on a preview — a chapter jump — so this loads the book
+            // paused at its saved position and seeks to the requested spot.
+            // Never auto-plays, matching chapter-switch semantics.
+            if (!LocalPlaybackController.isBookLoaded(bookId)) {
+                LocalPlaybackController.open(book, autoPlay = false)
+            }
+            if (partIndex > 0) {
+                LocalPlaybackController.seekToPart(partIndex)
+            }
+            if (positionMs > 0) {
+                LocalPlaybackController.seekTo(positionMs)
+            }
         }
-        // Opening a book's screen (autoPlay=false) is a preview: the companion
-        // keeps whatever is currently playing until an explicit PlayBook
-        // switches to this book. The tool renders the book's static info.
         return LightResult.Success(LightServiceMethod.PlayBook.encodeResponse(Unit))
     }
 

@@ -60,8 +60,8 @@ class PlayerViewModel(
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
         super.onScreenShow(screen)
         // Opening a book's screen is a preview: the companion keeps whatever is
-        // playing until the user explicitly plays this book (OpenBook no longer
-        // touches the player), so nothing to load here — just poll.
+        // playing until the user acts (play, or a chapter jump from the picker,
+        // which opens this book paused). Nothing to load here — just poll.
         startPolling()
     }
 
@@ -165,6 +165,31 @@ class PlayerViewModel(
         }
     }
 
+    /** Jumps to a chapter on this book. From a preview (book not loaded) this
+     *  loads the book paused at the chapter — never touching whatever else is
+     *  playing; once live it seeks, preserving the play/pause state. */
+    fun jumpToChapter(index: Int) {
+        val chapters = embeddedChapters(book)
+        viewModelScope.launch {
+            if (!isLive) {
+                // Embedded-chapter books are single-part today, so the flat
+                // chapter index maps straight to a start offset that is already
+                // the global seek target.
+                if (chapters.isNotEmpty()) {
+                    MediaClient.open(book.id, positionMs = chapters[index].startMs)
+                } else {
+                    MediaClient.open(book.id, partIndex = index)
+                }
+            } else if (chapters.isNotEmpty()) {
+                MediaClient.seekTo(chapters[index].startMs)
+            } else {
+                MediaClient.seekToPart(index)
+            }
+            refreshOnce()
+            startPolling()
+        }
+    }
+
     fun setSpeed(speed: Float) {
         viewModelScope.launch {
             MediaClient.setSpeed(speed)
@@ -236,32 +261,31 @@ class PlayerScreen(
                         onSeekFraction = if (live) viewModel::seekToFraction else { _ -> },
                     )
                 }
-                if (state != null) {
-                    LightBottomBar(
-                        modifier = Modifier.navigationBarsPadding(),
-                        items = listOf(
-                            LightBarButton.LightIcon(
-                                icon = LightIcons.SETTINGS,
-                                onClick = { openSettings() },
-                                contentDescription = "Settings",
-                            ),
-                            // Speed + chapters act on the loaded player; in
-                            // preview they'd affect the other book, so they
-                            // appear once this book is live.
-                            if (state?.bookId == book.id) LightBarButton.Text(
-                                text = formatSpeed(state!!.speed),
-                                onClick = { openSpeedPicker() },
-                            ) else null,
-                            if (state?.bookId == book.id &&
-                                (state!!.partCount > 1 || chapters.size > 1)
-                            ) LightBarButton.LightIcon(
-                                icon = LightIcons.LIST,
-                                onClick = { openChapters() },
-                                contentDescription = "Chapters",
-                            ) else null,
+                LightBottomBar(
+                    modifier = Modifier.navigationBarsPadding(),
+                    items = listOf(
+                        LightBarButton.LightIcon(
+                            icon = LightIcons.SETTINGS,
+                            onClick = { openSettings() },
+                            contentDescription = "Settings",
                         ),
-                    )
-                }
+                        // Speed is a global setting, so it always shows the
+                        // current value and works even while this book is only
+                        // a preview — it never needs the book loaded.
+                        LightBarButton.Text(
+                            text = formatSpeed(state?.speed ?: 1f),
+                            onClick = { openSpeedPicker() },
+                        ),
+                        // Chapters view from the book's own data; a tap from a
+                        // preview loads this book paused at the chosen chapter
+                        // instead of seeking whatever is playing.
+                        if (book.partCount > 1 || chapters.size > 1) LightBarButton.LightIcon(
+                            icon = LightIcons.LIST,
+                            onClick = { openChapters() },
+                            contentDescription = "Chapters",
+                        ) else null,
+                    ),
+                )
             }
         }
     }
@@ -280,15 +304,7 @@ class PlayerScreen(
 
     private fun openChapters() {
         navigateTo(screenFactory = { ChaptersPickerScreen(it, book) }) { index ->
-            val chapters = embeddedChapters(book)
-            if (chapters.isNotEmpty()) {
-                // Embedded-chapter books are single-part today, so the flat
-                // chapter index maps straight to a start offset that is already
-                // the global seek target.
-                viewModel.seekTo(chapters[index].startMs)
-            } else {
-                viewModel.seekToPart(index)
-            }
+            viewModel.jumpToChapter(index)
         }
     }
 }

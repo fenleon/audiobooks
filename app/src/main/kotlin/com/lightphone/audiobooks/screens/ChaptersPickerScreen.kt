@@ -49,13 +49,24 @@ class ChaptersPickerViewModel(
         viewModelScope.launch {
             val state = MediaClient.playbackState()
             val chapters = embeddedChapters(book)
-            currentIndex.value = when {
-                state == null -> 0
-                chapters.isNotEmpty() -> chapterIndexAt(
-                    chapters,
-                    (state.positionMs - partStartMs(book, state.partIndex.coerceAtLeast(0))).coerceAtLeast(0),
-                )
-                else -> state.partIndex
+            currentIndex.value = if (state?.bookId == book.id) {
+                // Live: highlight where playback actually is.
+                if (chapters.isNotEmpty()) {
+                    chapterIndexAt(
+                        chapters,
+                        (state.positionMs - partStartMs(book, state.partIndex.coerceAtLeast(0))).coerceAtLeast(0),
+                    )
+                } else {
+                    state.partIndex
+                }
+            } else {
+                // Preview (or nothing loaded): highlight the book's own saved
+                // position instead of whatever is playing.
+                if (chapters.isNotEmpty()) {
+                    chapterIndexAt(chapters, book.progressMs.coerceAtLeast(0))
+                } else {
+                    book.parts.indices.lastOrNull { partStartMs(book, it) <= book.progressMs } ?: 0
+                }
             }
         }
     }

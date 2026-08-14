@@ -69,6 +69,9 @@ object LocalPlaybackController {
         appContext = context.applicationContext
         player = LightAudioPlayer(appContext, LightAudioUsage.Speech)
         PlaybackMediaSession.init(appContext)
+        // Speed is a global setting; report it even before any book is open.
+        speed = PlaybackSettingsStore.playbackSpeed.coerceIn(0.5f, 2f)
+        mutableState.value = mutableState.value.copy(playbackSpeed = speed.toDouble())
         collectPlayerEvents()
     }
 
@@ -97,7 +100,8 @@ object LocalPlaybackController {
         player.pause()
         activeBook = book
         val saved = AudiobookProgressStore.read(book.source, book.id)
-        speed = saved.playbackSpeed.coerceIn(0.5f, 2f)
+        // Speed is global across books, not restored per book.
+        speed = PlaybackSettingsStore.playbackSpeed.coerceIn(0.5f, 2f)
         val references = book.parts.map { it.playbackReference }
             .ifEmpty { listOf(book.playbackReference) }
         partDurations = LongArray(references.size) { index ->
@@ -259,6 +263,7 @@ object LocalPlaybackController {
     fun setSpeed(value: Double) {
         speed = value.toFloat().coerceIn(0.5f, 2f)
         player.speed = speed
+        PlaybackSettingsStore.playbackSpeed = speed
         mutableState.value = mutableState.value.copy(playbackSpeed = speed.toDouble())
         PlaybackMediaSession.update(mutableState.value)
         persistProgress()

@@ -130,20 +130,25 @@ object MediaServiceMethods {
                 LightResult.ErrorCode.Unknown,
                 "book not found: $bookId",
             )
-        // Pressing play on an already-open book must not re-open it: a re-open
-        // stops + re-queues, which resets the player position to 0 until the
-        // pending seek lands (the UI flashes 00:00) and adds needless lag.
-        if (LocalPlaybackController.isBookLoaded(bookId)) {
-            if (autoPlay) LocalPlaybackController.play()
-        } else {
-            LocalPlaybackController.open(book, autoPlay = autoPlay)
+        if (autoPlay) {
+            // Pressing play on an already-open book must not re-open it: a re-open
+            // stops + re-queues, which resets the player position to 0 until the
+            // pending seek lands (the UI flashes 00:00) and adds needless lag.
+            if (LocalPlaybackController.isBookLoaded(bookId)) {
+                LocalPlaybackController.play()
+            } else {
+                LocalPlaybackController.open(book, autoPlay = true)
+            }
+            if (partIndex > 0) {
+                LocalPlaybackController.seekToPart(partIndex)
+            }
+            if (positionMs > 0) {
+                LocalPlaybackController.seekTo(positionMs)
+            }
         }
-        if (partIndex > 0) {
-            LocalPlaybackController.seekToPart(partIndex)
-        }
-        if (positionMs > 0) {
-            LocalPlaybackController.seekTo(positionMs)
-        }
+        // Opening a book's screen (autoPlay=false) is a preview: the companion
+        // keeps whatever is currently playing until an explicit PlayBook
+        // switches to this book. The tool renders the book's static info.
         return LightResult.Success(LightServiceMethod.PlayBook.encodeResponse(Unit))
     }
 

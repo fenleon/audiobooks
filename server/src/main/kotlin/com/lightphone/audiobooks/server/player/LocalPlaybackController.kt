@@ -58,6 +58,10 @@ object LocalPlaybackController {
     private var lastChapterIndex = -1
     private var lastResolvedDuration = 0L
     private var pendingFgsStop: Job? = null
+    /** Play intent: true from play() until pause()/close()/end. The reported
+     *  isPlaying is this, not the raw player state, so a seek re-buffer (which
+     *  briefly dips isPlaying false) doesn't flip the UI to paused. */
+    private var playRequested = false
 
     val state: StateFlow<PlayerState> = mutableState.asStateFlow()
 
@@ -75,6 +79,7 @@ object LocalPlaybackController {
         } catch (error: Exception) {
             Log.w(TAG, "open() failed", error)
             PlaybackForegroundService.update(appContext, false)
+            playRequested = false
             mutableState.value = mutableState.value.copy(
                 isPlaying = false,
                 readiness = PlayerReadiness.Error,
@@ -127,6 +132,7 @@ object LocalPlaybackController {
         )
         pendingSeekMilliseconds = null
         lastResolvedDuration = 0L
+        playRequested = false
         runCatching {
             player.setMediaQueue(items, startIndex = startPart.coerceIn(0, items.lastIndex))
             player.speed = speed
@@ -141,6 +147,7 @@ object LocalPlaybackController {
         }.onFailure { error ->
             Log.w(TAG, "queue set failed: ${error.message}")
             PlaybackForegroundService.update(appContext, false)
+            playRequested = false
             mutableState.value = mutableState.value.copy(
                 isPlaying = false,
                 readiness = PlayerReadiness.Error,
@@ -173,17 +180,24 @@ object LocalPlaybackController {
         ) {
             seekTo(0L)
         }
+        playRequested = true
         player.play()
         armSilentFailureCheck()
     }
 
     fun pause() {
-        player.pause()
+        pausePlayback()
         // Stop the foreground service immediately on an explicit pause; the
         // isPlaying collector's debounced stop covers transient re-buffer dips.
         pendingFgsStop?.cancel()
         pendingFgsStop = null
         PlaybackForegroundService.update(appContext, false)
+    }
+
+    /** Clears play intent and pauses (user pause, or a by-design boundary pause). */
+    private fun pausePlayback() {
+        playRequested = false
+        player.pause()
     }
 
     /** Whether the given book is the one currently loaded on the player. */
@@ -207,7 +221,7 @@ object LocalPlaybackController {
             // a manual skip past a chapter end behaves like a natural chapter
             // boundary instead of flowing into the next chapter.
             if (!PlaybackSettingsStore.autoPlayNext) {
-                player.pause()
+                pausePlayback()
             }
         }
         // Applied now when the target item's duration is already resolved,
@@ -285,6 +299,7 @@ object LocalPlaybackController {
         lastChapterPartIndex = -1
         lastChapterIndex = -1
         lastResolvedDuration = 0L
+        playRequested = false
         mutableState.value = PlayerState(
             readiness = PlayerReadiness.Unavailable,
         )
@@ -301,9 +316,16 @@ object LocalPlaybackController {
                     pendingFgsStop = null
                     PlaybackForegroundService.update(appContext, true)
                 } else {
-                    // A seek re-buffer can dip isPlaying false briefly; don't
-                    // tear down the foreground service (and its notification)
-                    // for that — only for a pause that sticks.
+                    // A seek re-buffer can dip isPlaying false briefly; keep
+                    // play intent (the UI shows playing through the buffer)
+                    // unless the queue actually ended.
+                    if (player.durationMs.value > 0 &&
+                        player.positionMs.value >= player.durationMs.value - END_EPSILON_MILLISECONDS
+                    ) {
+                        playRequested = false
+                    }
+                    // ...and don't tear down the foreground service (and its
+                    // notification) for a transient dip — only a pause that sticks.
                     pendingFgsStop?.cancel()
                     pendingFgsStop = scope.launch {
                         delay(FGS_STOP_DEBOUNCE_MILLISECONDS)
@@ -322,7 +344,7 @@ object LocalPlaybackController {
                 if (index > lastPartIndex && lastPartIndex >= 0 &&
                     player.isPlaying.value && !PlaybackSettingsStore.autoPlayNext
                 ) {
-                    player.pause()
+                    pausePlayback()
                 }
                 lastPartIndex = index
                 emitState()
@@ -371,7 +393,7 @@ object LocalPlaybackController {
             val chapters = chaptersForPart(index)
             if (chapters.isNotEmpty() && lastChapterIndex >= 0) {
                 val currentChapter = chapterIndexAt(chapters, player.positionMs.value)
-                if (currentChapter > lastChapterIndex) player.pause()
+                if (currentChapter > lastChapterIndex) pausePlayback()
                 lastChapterIndex = currentChapter
             }
         }
@@ -396,7 +418,7 @@ object LocalPlaybackController {
         val duration = resolvedTotal.takeIf { it > 0 }
             ?: (mutableState.value.durationSeconds * 1000).toLong()
         val currentIndex = player.currentMediaItemIndex.value.coerceAtLeast(0)
-        val playing = player.isPlaying.value
+        val playing = playRequested
         val errored = mutableState.value.readiness == PlayerReadiness.Error
         mutableState.value = mutableState.value.copy(
             positionSeconds = position / 1000.0,
@@ -430,6 +452,7 @@ object LocalPlaybackController {
                 player.durationMs.value == 0L && !player.isPlaying.value
             ) {
                 PlaybackForegroundService.update(appContext, false)
+                playRequested = false
                 mutableState.value = mutableState.value.copy(
                     isPlaying = false,
                     readiness = PlayerReadiness.Error,

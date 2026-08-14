@@ -56,30 +56,23 @@ class PlayerViewModel(
      *  session; the skip controls stay visible from then on, even when paused. */
     val hasPlayed = MutableStateFlow(false)
     private var pollJob: Job? = null
-    private var started = false
 
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
         super.onScreenShow(screen)
-        if (!started) {
-            started = true
-            // Show a loading state instead of the previously-loaded book while
-            // the new book opens (open() blocks the server's main thread), and
-            // only start polling once it has — a poll racing ahead of open()
-            // returns the previous book's state.
-            state.value = null
-            viewModelScope.launch {
-                MediaClient.open(book.id)
-                startPolling()
-            }
-        } else {
-            startPolling()
-        }
+        // Opening a book's screen is a preview: the companion keeps whatever is
+        // playing until the user explicitly plays this book (OpenBook no longer
+        // touches the player), so nothing to load here — just poll.
+        startPolling()
     }
 
     override fun onScreenHide(screen: SimpleLightScreen<Unit>) {
         super.onScreenHide(screen)
         stopPolling()
     }
+
+    /** Whether the player is showing this book's live playback (vs a static preview). */
+    val isLive: Boolean
+        get() = state.value?.bookId == book.id
 
     /**
      * Polls the server at 1 s while the player screen is shown. A seek
@@ -100,8 +93,9 @@ class PlayerViewModel(
     private suspend fun refreshOnce() {
         state.value = MediaClient.playbackState()
         // A book reopened mid-playback (e.g. via the notification) counts
-        // as played too.
-        if (state.value?.playing == true) hasPlayed.value = true
+        // as played too — but only for this book, not whatever else is
+        // playing while this screen is a preview.
+        if (state.value?.bookId == book.id && state.value?.playing == true) hasPlayed.value = true
     }
 
     private fun stopPolling() {
@@ -110,7 +104,9 @@ class PlayerViewModel(
     }
 
     fun togglePlay() {
-        val playing = state.value?.playing == true
+        // In preview the play button means "play this book" even if another
+        // book is currently playing — never pause the other book from here.
+        val playing = isLive && state.value?.playing == true
         viewModelScope.launch {
             if (playing) {
                 MediaClient.pause()
@@ -124,9 +120,10 @@ class PlayerViewModel(
     }
 
     fun seekBy(deltaMilliseconds: Long) {
+        if (!isLive) return
         viewModelScope.launch {
             // Read the position fresh: the cached one can be up to a poll
-            // interval stale (5 s while paused), which would bias the target.
+            // interval stale, which would bias the target.
             val current = MediaClient.playbackState()?.positionMs ?: return@launch
             MediaClient.seekTo(current + deltaMilliseconds)
             refreshOnce()
@@ -136,6 +133,7 @@ class PlayerViewModel(
 
     /** Seeks on the book's global timeline (embedded-chapter jumps land here). */
     fun seekTo(positionMs: Long) {
+        if (!isLive) return
         viewModelScope.launch {
             MediaClient.seekTo(positionMs)
             refreshOnce()
@@ -144,6 +142,7 @@ class PlayerViewModel(
     }
 
     fun seekToFraction(fraction: Float) {
+        if (!isLive) return
         val state = state.value ?: return
         val chapter = chapterTime(book, state)
         val start = chapter?.startMs ?: 0L
@@ -158,6 +157,7 @@ class PlayerViewModel(
 
     /** Jumps to a chapter on the loaded book, preserving the play/pause state. */
     fun seekToPart(index: Int) {
+        if (!isLive) return
         viewModelScope.launch {
             MediaClient.seekToPart(index)
             refreshOnce()
@@ -209,37 +209,31 @@ class PlayerScreen(
                     ),
                 )
                 Box(modifier = Modifier.weight(1f)) {
-                    val playback = state
-                    if (playback == null) {
-                        LightText(
-                            text = "Loading…",
-                            variant = LightTextVariant.Copy,
-                            lighten = true,
-                            modifier = Modifier.padding(24.dp),
+                    val live = state?.bookId == book.id
+                    val playback = if (live) state else previewState(book)
+                    val embeddedIndex = if (chapters.isNotEmpty()) {
+                        chapterIndexAt(
+                            chapters,
+                            (playback.positionMs - partStartMs(book, playback.partIndex.coerceAtLeast(0))).coerceAtLeast(0),
                         )
                     } else {
-                        val embeddedIndex = if (chapters.isNotEmpty()) {
-                            chapterIndexAt(
-                                chapters,
-                                (playback.positionMs - partStartMs(book, playback.partIndex.coerceAtLeast(0))).coerceAtLeast(0),
-                            )
-                        } else {
-                            playback.partIndex
-                        }
-                        PlayerContent(
-                            state = playback,
-                            chapter = chapterTime(book, playback),
-                            showSkips = hasPlayed,
-                            showChapter = playback.partCount > 1 || chapters.size > 1,
-                            chapterIndex = embeddedIndex,
-                            chapterCount = if (chapters.isNotEmpty()) chapters.size else playback.partCount,
-                            themeColors = themeColors,
-                            onBack15 = { viewModel.seekBy(-15_000) },
-                            onForward15 = { viewModel.seekBy(15_000) },
-                            onTogglePlay = { viewModel.togglePlay() },
-                            onSeekFraction = viewModel::seekToFraction,
-                        )
+                        playback.partIndex
                     }
+                    PlayerContent(
+                        state = playback,
+                        chapter = chapterTime(book, playback),
+                        showSkips = hasPlayed,
+                        showChapter = playback.partCount > 1 || chapters.size > 1,
+                        chapterIndex = embeddedIndex,
+                        chapterCount = if (chapters.isNotEmpty()) chapters.size else playback.partCount,
+                        themeColors = themeColors,
+                        onBack15 = { viewModel.seekBy(-15_000) },
+                        onForward15 = { viewModel.seekBy(15_000) },
+                        onTogglePlay = { viewModel.togglePlay() },
+                        // Seeking a book that isn't loaded would seek whatever
+                        // is playing — preview shows the saved position only.
+                        onSeekFraction = if (live) viewModel::seekToFraction else {},
+                    )
                 }
                 if (state != null) {
                     LightBottomBar(
@@ -250,13 +244,16 @@ class PlayerScreen(
                                 onClick = { openSettings() },
                                 contentDescription = "Settings",
                             ),
-                            LightBarButton.Text(
+                            // Speed + chapters act on the loaded player; in
+                            // preview they'd affect the other book, so they
+                            // appear once this book is live.
+                            if (state?.bookId == book.id) LightBarButton.Text(
                                 text = formatSpeed(state!!.speed),
                                 onClick = { openSpeedPicker() },
-                            ),
-                            // Chapters exist for multi-part (folder) books, or
-                            // single-file books with embedded chapters.
-                            if (state!!.partCount > 1 || chapters.size > 1) LightBarButton.LightIcon(
+                            ) else null,
+                            if (state?.bookId == book.id &&
+                                (state!!.partCount > 1 || chapters.size > 1)
+                            ) LightBarButton.LightIcon(
                                 icon = LightIcons.LIST,
                                 onClick = { openChapters() },
                                 contentDescription = "Chapters",
@@ -422,6 +419,27 @@ private fun TransportButton(
 
 /** The current chapter's start, duration, and position within it. */
 private data class ChapterTime(val startMs: Long, val durationMs: Long, val positionMs: Long)
+
+/**
+ * Static rendering state for a book that is not loaded on the player (the
+ * companion is playing something else). [bookId] stays null so the live check
+ * (`state.bookId == book.id`) keeps treating it as a preview.
+ */
+private fun previewState(book: LightServiceMethod.GetBooks.Book): LightServiceMethod.GetPlaybackState.Response {
+    val savedPartIndex = book.parts.indices.lastOrNull { partStartMs(book, it) <= book.progressMs } ?: 0
+    return LightServiceMethod.GetPlaybackState.Response(
+        bookId = null,
+        title = book.title,
+        author = book.author,
+        partIndex = savedPartIndex,
+        partCount = book.partCount,
+        partTitle = book.parts.getOrNull(savedPartIndex)?.title,
+        positionMs = book.progressMs,
+        durationMs = book.durationMs,
+        playing = false,
+        speed = 1f,
+    )
+}
 
 /**
  * Maps the book-global playback state onto the current chapter, so the player

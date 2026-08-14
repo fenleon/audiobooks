@@ -163,7 +163,13 @@ object LocalBookRepository {
             val size = file.length().coerceAtLeast(0)
             val mtime = file.lastModified()
             val cached = cache[file.absolutePath]
-            if (cached != null && cached.size == size && cached.mtimeMillis == mtime) {
+            // A cached zero duration means the metadata read never succeeded
+            // (e.g. the first scan raced MediaStore indexing). Treat it as a
+            // miss so a later successful read heals the entry instead of
+            // pinning "00:00" for as long as the file is unchanged.
+            if (cached != null && cached.size == size && cached.mtimeMillis == mtime &&
+                cached.durationMilliseconds > 0
+            ) {
                 cacheHits++
                 return cached
             }

@@ -82,17 +82,17 @@ class PlayerViewModel(
     }
 
     /**
-     * Adaptive polling: 1 s while playing, 5 s while paused. The slow rate
-     * (instead of stopping entirely) keeps the screen live through a seek
-     * re-buffer dip — where isPlaying briefly reads false — and catches an
-     * external resume, at a trivial cost (~0.2 binder reads/s paused).
+     * Polls the server at 1 s while the player screen is shown. A seek
+     * re-buffer briefly dips isPlaying to false; polling must not react to
+     * that by slowing down, or the play/pause icon would show the wrong state
+     * until the next slow read. Screen hidden = no polling at all.
      */
     private fun startPolling() {
         stopPolling()
         pollJob = viewModelScope.launch {
             while (isActive) {
                 refreshOnce()
-                delay(if (state.value?.playing == true) POLL_INTERVAL_MS else SLOW_POLL_INTERVAL_MS)
+                delay(POLL_INTERVAL_MS)
             }
         }
     }
@@ -175,7 +175,6 @@ class PlayerViewModel(
 
     private companion object {
         const val POLL_INTERVAL_MS = 1_000L
-        const val SLOW_POLL_INTERVAL_MS = 5_000L
     }
 }
 

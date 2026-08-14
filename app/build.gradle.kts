@@ -33,8 +33,11 @@ android {
             signingConfig = signingConfigs.getByName("lightsdkDev")
         }
         getByName("release") {
-            isMinifyEnabled = false
-            isShrinkResources = false
+            // R8 dead-code elimination + resource shrinking (0.5.5): the app is
+            // ~67 MB mostly of unreachable library code; the SDK's consumer
+            // rules keep the generated registry + entry points.
+            isMinifyEnabled = true
+            isShrinkResources = true
             signingConfig = signingConfigs.getByName("lightsdkDev")
         }
     }
@@ -53,6 +56,12 @@ kotlin {
 
 dependencies {
     // SDK modules come from the included ../light-sdk build (see settings.gradle.kts).
-    implementation(libs.sdk.client)   // LightScreen, LightActivity, callRemoteServiceMethod
+    // sdk:client pulls sdk:ui, which bundles an ML Kit QR scanner + CameraX for the
+    // SDK's authenticator example. Audiobooks never touches it — exclude the groups
+    // so their ~20 MB of native libs don't ship (R8 removes the scanner code).
+    implementation(libs.sdk.client) {
+        exclude(group = "com.google.mlkit")
+        exclude(group = "androidx.camera")
+    }
     implementation(libs.kotlinx.coroutines)
 }

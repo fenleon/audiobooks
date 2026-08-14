@@ -126,10 +126,9 @@ adb shell pm grant com.lightphone.audiobooks android.permission.READ_MEDIA_AUDIO
 - Embedded chapters inside a folder book's individual files are not merged —
   folder books stay file-per-chapter; single-file books do read their embedded
   chapters (MP3 chapter tags, M4B bookmarks).
-- No cover art, ebook reading, or cloud sync; books must be on the device in
-  `/sdcard/Audiobooks/`.
-- The debug/release APK is large (media3 + sdk:client transitive deps); a
-  minified release build would shrink it.
+- Release builds are R8-minified (since 0.5.5) and exclude the SDK UI module's
+  unused ML Kit QR scanner, so the release APKs are ~6-7 MB; debug APKs are
+  still ~77 MB (unminified + scanner included).
 
 ## Rollback
 

@@ -1,8 +1,8 @@
 [tool]
 id = "com.lightphone.audiobooks"
 label = "Audiobooks"
-versionCode = 15
-versionName = "0.5.0"
+versionCode = 16
+versionName = "0.5.5"
 permissions = []
 # The tool is a thin UI; the companion (:server) hosts the SDK service, the
 # /sdcard/Audiobooks scan, and playback. Point at com.lightos on a real LP3

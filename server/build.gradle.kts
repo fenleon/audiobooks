@@ -22,14 +22,15 @@ android {
         applicationId = "com.lightphone.audiobooks.server"
         minSdk = 34
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.5.0"
+        versionCode = 6
+        versionName = "0.5.5"
     }
 
     buildTypes {
         getByName("release") {
-            isMinifyEnabled = false
-            isShrinkResources = false
+            // R8 dead-code elimination + resource shrinking (0.5.5) — see :app.
+            isMinifyEnabled = true
+            isShrinkResources = true
             signingConfig = signingConfigs.getByName("lightsdkDev")
         }
         getByName("debug") {
@@ -55,9 +56,18 @@ kotlin {
 
 dependencies {
     // SDK modules come from the included ../light-sdk build (see settings.gradle.kts).
-    implementation(libs.sdk.server)   // LightSdkServer + LightSdkService (the binder)
-    implementation(libs.sdk.client)   // LightAudioPlayer
-    implementation(libs.sdk.ui)       // Light design system for the status screen
+    implementation(libs.sdk.server) {  // LightSdkServer + LightSdkService (the binder)
+        exclude(group = "com.google.mlkit")
+        exclude(group = "androidx.camera")
+    }
+    implementation(libs.sdk.client) {  // LightAudioPlayer
+        exclude(group = "com.google.mlkit")
+        exclude(group = "androidx.camera")
+    }
+    implementation(libs.sdk.ui) {      // Light design system for the status screen
+        exclude(group = "com.google.mlkit")
+        exclude(group = "androidx.camera")
+    }
     implementation(libs.compose.activity)
     implementation(libs.kotlinx.coroutines)
     testImplementation(libs.junit)

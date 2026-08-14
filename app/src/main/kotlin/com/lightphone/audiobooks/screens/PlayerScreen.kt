@@ -209,8 +209,9 @@ class PlayerScreen(
                     ),
                 )
                 Box(modifier = Modifier.weight(1f)) {
-                    val live = state?.bookId == book.id
-                    val playback = if (live) state else previewState(book)
+                    val current = state
+                    val live = current?.bookId == book.id
+                    val playback = if (live) current else previewState(book)
                     val embeddedIndex = if (chapters.isNotEmpty()) {
                         chapterIndexAt(
                             chapters,
@@ -232,7 +233,7 @@ class PlayerScreen(
                         onTogglePlay = { viewModel.togglePlay() },
                         // Seeking a book that isn't loaded would seek whatever
                         // is playing — preview shows the saved position only.
-                        onSeekFraction = if (live) viewModel::seekToFraction else {},
+                        onSeekFraction = if (live) viewModel::seekToFraction else { _ -> },
                     )
                 }
                 if (state != null) {

@@ -82,17 +82,17 @@ class PlayerViewModel(
     }
 
     /**
-     * Adaptive polling: 1 s while playing, and it stops itself once the book is
-     * paused (the position is static and nothing else changes server-side).
-     * Each user command re-reads state once and restarts the loop.
+     * Adaptive polling: 1 s while playing, 5 s while paused. The slow rate
+     * (instead of stopping entirely) keeps the screen live through a seek
+     * re-buffer dip — where isPlaying briefly reads false — and catches an
+     * external resume, at a trivial cost (~0.2 binder reads/s paused).
      */
     private fun startPolling() {
         stopPolling()
         pollJob = viewModelScope.launch {
             while (isActive) {
                 refreshOnce()
-                if (state.value?.playing != true) break
-                delay(POLL_INTERVAL_MS)
+                delay(if (state.value?.playing == true) POLL_INTERVAL_MS else SLOW_POLL_INTERVAL_MS)
             }
         }
     }
@@ -124,8 +124,10 @@ class PlayerViewModel(
     }
 
     fun seekBy(deltaMilliseconds: Long) {
-        val current = state.value?.positionMs ?: return
         viewModelScope.launch {
+            // Read the position fresh: the cached one can be up to a poll
+            // interval stale (5 s while paused), which would bias the target.
+            val current = MediaClient.playbackState()?.positionMs ?: return@launch
             MediaClient.seekTo(current + deltaMilliseconds)
             refreshOnce()
             startPolling()
@@ -173,6 +175,7 @@ class PlayerViewModel(
 
     private companion object {
         const val POLL_INTERVAL_MS = 1_000L
+        const val SLOW_POLL_INTERVAL_MS = 5_000L
     }
 }
 

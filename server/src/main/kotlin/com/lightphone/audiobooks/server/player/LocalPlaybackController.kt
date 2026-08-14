@@ -14,6 +14,7 @@ import com.thelightphone.sdk.audio.LightAudioUsage
 import com.thelightphone.sdk.audio.LightMediaMetadata
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,6 +28,8 @@ private const val TAG = "LocalPlayback"
 private const val PROGRESS_SAVE_INTERVAL_MILLISECONDS = 7_000L
 private const val END_EPSILON_MILLISECONDS = 1_500L
 private const val SILENT_FAILURE_TIMEOUT_MILLISECONDS = 3_000L
+/** How long a non-playing state must hold before the foreground service stops (seek re-buffers dip isPlaying briefly). */
+private const val FGS_STOP_DEBOUNCE_MILLISECONDS = 2_000L
 
 /**
  * Owns playback via the SDK's [LightAudioPlayer] (ExoPlayer queue) and keeps
@@ -54,6 +57,7 @@ object LocalPlaybackController {
     private var lastChapterPartIndex = -1
     private var lastChapterIndex = -1
     private var lastResolvedDuration = 0L
+    private var pendingFgsStop: Job? = null
 
     val state: StateFlow<PlayerState> = mutableState.asStateFlow()
 
@@ -175,8 +179,11 @@ object LocalPlaybackController {
 
     fun pause() {
         player.pause()
-        // The isPlaying collector takes it from here: foreground service down,
-        // progress persisted, state + media session mirrored.
+        // Stop the foreground service immediately on an explicit pause; the
+        // isPlaying collector's debounced stop covers transient re-buffer dips.
+        pendingFgsStop?.cancel()
+        pendingFgsStop = null
+        PlaybackForegroundService.update(appContext, false)
     }
 
     /** Whether the given book is the one currently loaded on the player. */
@@ -290,9 +297,18 @@ object LocalPlaybackController {
         scope.launch {
             player.isPlaying.collect { playing ->
                 if (playing) {
+                    pendingFgsStop?.cancel()
+                    pendingFgsStop = null
                     PlaybackForegroundService.update(appContext, true)
                 } else {
-                    PlaybackForegroundService.update(appContext, false)
+                    // A seek re-buffer can dip isPlaying false briefly; don't
+                    // tear down the foreground service (and its notification)
+                    // for that — only for a pause that sticks.
+                    pendingFgsStop?.cancel()
+                    pendingFgsStop = scope.launch {
+                        delay(FGS_STOP_DEBOUNCE_MILLISECONDS)
+                        PlaybackForegroundService.update(appContext, false)
+                    }
                     persistProgress()
                 }
                 PlaybackForegroundService.refresh(appContext)

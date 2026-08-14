@@ -10,7 +10,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
-import android.provider.OpenableColumns
 import android.util.Log
 import com.lightphone.audiobooks.server.library.chapters.Id3v2ChapterParser
 import com.lightphone.audiobooks.server.library.chapters.Mp4ChapterParser
@@ -23,6 +22,8 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
@@ -46,6 +47,12 @@ object LocalBookRepository {
     private val mutableScanResult = MutableStateFlow<LocalScanResult?>(null)
     private val mutableScanning = MutableStateFlow(false)
     private var scanGeneration = 0
+
+    // Scan metadata cache: absolute path -> metadata for that file, keyed by
+    // (size, mtime). Unchanged files are never re-read, so scans after the
+    // first one are a cheap walk + MediaStore query (the Bard "re-reads
+    // everything every time" problem).
+    private var metadataCache: MutableMap<String, CachedMetadata>? = null
 
     val books: StateFlow<List<Audiobook>> = mutableBooks.asStateFlow()
     val scanResult: StateFlow<LocalScanResult?> = mutableScanResult.asStateFlow()
@@ -114,7 +121,7 @@ object LocalBookRepository {
         if (!hasReadPermission()) return@withContext LocalScanResult.PermissionRequired
 
         // MediaStore does not represent empty directories. This existence-only probe lets the companion
-        // distinguish a missing top-level folder while all file discovery remains in MediaStore.
+        // distinguish a missing top-level folder while all file discovery remains in the walk + MediaStore.
         val rootDirectory = File(
             Environment.getExternalStorageDirectory(),
             AUDIOBOOKS_DIRECTORY,
@@ -135,17 +142,178 @@ object LocalBookRepository {
         } else {
             emptyList()
         }
-        val scannedUris = withTimeoutOrNull(10_000) {
-            directCandidates.let { requestMediaIndexing(it) }
-        }.orEmpty()
-        Log.d(TAG, "scan generation=$generation strategy=direct-index-and-mediastore")
 
+        // MediaStore supplies content URIs (stable ids, playback references) for
+        // indexed files. Only files it has never seen are handed to the media
+        // scanner — on a cached run that's none, so the 10s indexing window is
+        // never hit and the scan stays a cheap walk + query.
+        val rows = queryMediaStoreUris(rootDirectory)
+        val missing = directCandidates.filter { it.absolutePath !in rows }
+        val scannedUris = withTimeoutOrNull(10_000) {
+            requestMediaIndexing(missing)
+        }.orEmpty()
+        Log.d(TAG, "scan generation=$generation strategy=walk-index-mediastore (${missing.size} to index)")
+
+        val cache = metadataCache()
+        var cacheDirty = false
+        var cacheHits = 0
+        var cacheMisses = 0
+        // Reads the file's metadata unless an unchanged (size, mtime) entry is cached.
+        fun metadataFor(file: File, uri: Uri): CachedMetadata {
+            val size = file.length().coerceAtLeast(0)
+            val mtime = file.lastModified()
+            val cached = cache[file.absolutePath]
+            if (cached != null && cached.size == size && cached.mtimeMillis == mtime) {
+                cacheHits++
+                return cached
+            }
+            cacheMisses++
+            val embedded = readMetadata(uri)
+            val fresh = CachedMetadata(
+                size = size,
+                mtimeMillis = mtime,
+                title = embedded.title,
+                author = embedded.author,
+                album = embedded.album,
+                durationMilliseconds = embedded.durationMilliseconds,
+                trackNumber = embedded.trackNumber,
+                discNumber = embedded.discNumber,
+            )
+            cache[file.absolutePath] = fresh
+            cacheDirty = true
+            return fresh
+        }
+
+        // Drop entries for files that no longer exist so the cache stays bounded.
+        val candidatePaths = directCandidates.mapTo(HashSet()) { it.absolutePath }
+        if (cache.keys.removeAll { it !in candidatePaths }) cacheDirty = true
+
+        var mp3Count = 0
+        var m4bCount = 0
+        val accepted = linkedMapOf<String, Audiobook>()
+        val folderParts = linkedMapOf<String, LinkedHashMap<String, LocalPartCandidate>>()
+        val seenUris = HashSet<String>()
+        for (file in directCandidates) {
+            val path = file.absolutePath
+            val uri = rows[path] ?: scannedUris[path] ?: continue
+            if (!seenUris.add(uri.toString())) continue
+            val displayName = file.name
+            val size = file.length().coerceAtLeast(0)
+            val cached = metadataFor(file, uri)
+            val isM4b = displayName.endsWith(".m4b", ignoreCase = true)
+            if (isM4b) m4bCount++ else mp3Count++
+            val folderPath = folderPathOf(path, rootDirectory)
+            val mediaId = ContentUris.parseId(uri)
+            val stableId = "external:$mediaId"
+            if (folderPath == null) {
+                val stored = AudiobookProgressStore.read(AudiobookSource.Local, stableId)
+                val duration = cached.durationMilliseconds.takeIf { it > 0 }
+                    ?: stored.durationMilliseconds.takeIf { it > 0 }
+                    ?: 0L
+                // Chapters are parsed only when this file is a standalone book;
+                // the cache records whether they were, so a move between folder
+                // and standalone re-parses exactly when needed.
+                val chapters = if (cached.chaptersParsed) {
+                    cached.chapters
+                } else {
+                    readEmbeddedChapters(uri, isM4b, duration).also {
+                        cache[path] = cached.copy(chapters = it, chaptersParsed = true)
+                        cacheDirty = true
+                    }
+                }
+                accepted[stableId] = audiobookFrom(
+                    stableId = stableId,
+                    displayName = displayName,
+                    uri = uri,
+                    embedded = cached.toEmbeddedMetadata(),
+                    stored = stored,
+                    duration = duration,
+                    fileSizeBytes = size,
+                    chapters = chapters,
+                )
+            } else {
+                folderParts.getOrPut(folderPath) { linkedMapOf() }[displayName.lowercase()] =
+                    LocalPartCandidate(
+                        displayName = displayName,
+                        uri = uri,
+                        embedded = cached.toEmbeddedMetadata(),
+                        fileSizeBytes = size,
+                    )
+            }
+        }
+        folderParts.forEach { (folderPath, candidatesByPath) ->
+            // Part order: disc/track tags when present (absent sorts
+            // last), then natural filename order ("ch2" < "ch10").
+            val ordered = candidatesByPath.values.sortedWith(
+                compareBy<LocalPartCandidate> {
+                    it.embedded.discNumber.takeIf { n -> n > 0 } ?: Int.MAX_VALUE
+                }.thenBy {
+                    it.embedded.trackNumber.takeIf { n -> n > 0 } ?: Int.MAX_VALUE
+                }.thenComparator { a, b -> naturalOrder(a.displayName, b.displayName) },
+            )
+            val stableId = "folder:${folderPath.normalizedFolderHash()}"
+            val stored = AudiobookProgressStore.read(AudiobookSource.Local, stableId)
+            val duration = ordered.sumOf { it.embedded.durationMilliseconds.coerceAtLeast(0) }
+                .takeIf { it > 0 } ?: stored.durationMilliseconds
+            accepted[stableId] = Audiobook(
+                id = stableId,
+                source = AudiobookSource.Local,
+                // The embedded album tag carries the actual book title
+                // (chapter files title themselves per chapter); fall back
+                // to the folder name when it's absent.
+                title = ordered.firstNotNullOfOrNull {
+                    it.embedded.album.takeIf(String::isNotBlank)
+                } ?: folderPath.substringAfterLast('/'),
+                author = ordered.firstNotNullOfOrNull {
+                    it.embedded.author.takeIf(String::isNotBlank)
+                }.orEmpty(),
+                playbackReference = ordered.first().uri.toString(),
+                durationMilliseconds = duration,
+                positionMilliseconds = stored.positionMilliseconds.coerceAtMost(
+                    duration.takeIf { it > 0 } ?: Long.MAX_VALUE,
+                ),
+                playbackSpeed = stored.playbackSpeed,
+                completed = stored.completed,
+                lastPlayedAtMilliseconds = stored.lastPlayedAtMilliseconds,
+                lastUpdatedAtMilliseconds = stored.lastUpdatedAtMilliseconds,
+                fileSizeBytes = ordered.sumOf { it.fileSizeBytes },
+                parts = ordered.map {
+                    AudiobookPart(
+                        playbackReference = it.uri.toString(),
+                        durationMilliseconds = it.embedded.durationMilliseconds,
+                        title = it.embedded.title.ifBlank {
+                            it.displayName.removeSupportedSuffix()
+                        },
+                    )
+                },
+            )
+        }
+
+        if (cacheDirty) {
+            cachePrefs().edit()
+                .putString(SCAN_CACHE_KEY, encodeCache(cache))
+                .apply()
+        }
+
+        val books = accepted.values.sortedBy { it.title.lowercase() }
+        Log.d(TAG, "audiobooks folder found=$folderExists")
+        Log.d(TAG, "candidate count=${directCandidates.size}")
+        Log.d(TAG, "local book count=${books.size} (metadata cache hits=$cacheHits, misses=$cacheMisses)")
+        Log.d(TAG, "mp3 count=$mp3Count")
+        Log.d(TAG, "m4b count=$m4bCount")
+        when {
+            books.isNotEmpty() -> LocalScanResult.Success(books)
+            !folderExists -> LocalScanResult.FolderMissing
+            else -> LocalScanResult.Empty
+        }
+    }
+
+    /** Maps each indexed file's absolute path to its content URI, for files under Audiobooks/. */
+    private fun queryMediaStoreUris(rootDirectory: File): Map<String, Uri> {
         val collection = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
         val projection = buildList {
             add(MediaStore.Audio.Media._ID)
             add(MediaStore.Audio.Media.DISPLAY_NAME)
-            add(MediaStore.Audio.Media.MIME_TYPE)
-            add(MediaStore.Audio.Media.SIZE)
             if (Build.VERSION.SDK_INT >= 29) add(MediaStore.Audio.Media.RELATIVE_PATH)
             if (Build.VERSION.SDK_INT < 29) add(MediaStore.Audio.Media.DATA)
         }.toTypedArray()
@@ -159,185 +327,35 @@ object LocalBookRepository {
             selection = "${MediaStore.Audio.Media.DATA} LIKE ?"
             arguments = arrayOf("$root/$AUDIOBOOKS_DIRECTORY/%")
         }
-
-        var mp3Count = 0
-        var m4bCount = 0
-        val books = try {
-            val accepted = linkedMapOf<String, Audiobook>()
-            val folderParts = linkedMapOf<String, LinkedHashMap<String, LocalPartCandidate>>()
-            buildList {
-                appContext.contentResolver.query(
-                    collection,
-                    projection,
-                    selection,
-                    arguments,
-                    "${MediaStore.Audio.Media.DISPLAY_NAME} COLLATE NOCASE ASC",
-                )?.use { cursor ->
-                    val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
-                    val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME)
-                    val mimeColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.MIME_TYPE)
-                    val sizeColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.SIZE)
-                    val relativePathColumn = cursor.getColumnIndex(MediaStore.Audio.Media.RELATIVE_PATH)
-                    val dataColumn = cursor.getColumnIndex(MediaStore.Audio.Media.DATA)
-                    while (cursor.moveToNext()) {
-                        val displayName = cursor.getString(nameColumn).orEmpty()
-                        val mimeType = cursor.getString(mimeColumn).orEmpty()
-                        val dataPath = if (dataColumn >= 0) cursor.getString(dataColumn).orEmpty() else ""
-                        if (displayName.startsWith('.') || dataPath.substringAfterLast('/').startsWith('.')) continue
-                        val isMp3 = displayName.endsWith(".mp3", ignoreCase = true) || mimeType == "audio/mpeg"
-                        val isM4b = displayName.endsWith(".m4b", ignoreCase = true)
-                        if (!isMp3 && !isM4b) continue
-                        if (isM4b) m4bCount++ else mp3Count++
-                        val relativePath = if (relativePathColumn >= 0) {
-                            cursor.getString(relativePathColumn).orEmpty()
-                        } else {
-                            ""
-                        }
-                        if (Build.VERSION.SDK_INT < 29) {
-                            val root = Environment.getExternalStorageDirectory().absolutePath
-                            if (!dataPath.startsWith("$root/$AUDIOBOOKS_DIRECTORY/")) continue
-                        }
-                        val folderPath = folderPathOf(
-                            relativePath = relativePath,
-                            dataPath = dataPath,
-                            rootDirectory = rootDirectory,
-                        )
-
-                        val mediaId = cursor.getLong(idColumn)
-                        val uri = ContentUris.withAppendedId(collection, mediaId)
-                        val embedded = readMetadata(uri)
-                        val size = cursor.getLong(sizeColumn).coerceAtLeast(0)
-                        if (folderPath == null) {
-                            val stableId = "external:$mediaId"
-                            val stored = AudiobookProgressStore.read(AudiobookSource.Local, stableId)
-                            val duration = embedded.durationMilliseconds.takeIf { it > 0 }
-                                ?: stored.durationMilliseconds.takeIf { it > 0 }
-                                ?: 0L
-                            accepted[stableId] = audiobookFrom(
-                                stableId = stableId,
-                                displayName = displayName,
-                                uri = uri,
-                                embedded = embedded,
-                                stored = stored,
-                                duration = duration,
-                                fileSizeBytes = size,
-                                chapters = readEmbeddedChapters(uri, isM4b, duration),
-                            )
-                        } else {
-                            folderParts.getOrPut(folderPath) { linkedMapOf() }[displayName.lowercase()] =
-                                LocalPartCandidate(
-                                    displayName = displayName,
-                                    uri = uri,
-                                    embedded = embedded,
-                                    fileSizeBytes = size,
-                                )
-                        }
-                    }
-                }
-                scannedUris.forEach { (path, uri) ->
-                    val relative = runCatching { File(path).relativeTo(rootDirectory).invariantSeparatorsPath }
-                        .getOrDefault(File(path).name)
-                    val displayName = File(path).name
-                    val folderPath = relative.substringBeforeLast('/').takeIf { '/' in relative }
-                    val mediaId = runCatching { ContentUris.parseId(uri) }.getOrNull() ?: return@forEach
-                    val stableId = "external:$mediaId"
-                    if (stableId in accepted) return@forEach
-                    if (folderParts.values.any { parts -> parts.values.any { it.uri == uri } }) {
-                        return@forEach
-                    }
-                    val embedded = readMetadata(uri)
-                    if (displayName.endsWith(".m4b", true)) m4bCount++ else mp3Count++
-                    if (folderPath == null) {
-                        val stored = AudiobookProgressStore.read(AudiobookSource.Local, stableId)
-                        val duration = embedded.durationMilliseconds.takeIf { it > 0 }
-                            ?: stored.durationMilliseconds.takeIf { it > 0 }
-                            ?: 0L
-                        val isM4b = displayName.endsWith(".m4b", true)
-                        accepted[stableId] = audiobookFrom(
-                            stableId = stableId,
-                            displayName = displayName,
-                            uri = uri,
-                            embedded = embedded,
-                            stored = stored,
-                            duration = duration,
-                            fileSizeBytes = querySize(uri),
-                            chapters = readEmbeddedChapters(uri, isM4b, duration),
-                        )
+        val rows = HashMap<String, Uri>()
+        runCatching {
+            appContext.contentResolver.query(
+                collection,
+                projection,
+                selection,
+                arguments,
+                null,
+            )?.use { cursor ->
+                val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
+                val nameColumn = cursor.getColumnIndex(MediaStore.Audio.Media.DISPLAY_NAME)
+                val relativePathColumn = cursor.getColumnIndex(MediaStore.Audio.Media.RELATIVE_PATH)
+                val dataColumn = cursor.getColumnIndex(MediaStore.Audio.Media.DATA)
+                while (cursor.moveToNext()) {
+                    val absolutePath = if (Build.VERSION.SDK_INT >= 29) {
+                        val relativePath = cursor.getString(relativePathColumn).orEmpty()
+                        val displayName = if (nameColumn >= 0) cursor.getString(nameColumn).orEmpty() else ""
+                        Environment.getExternalStorageDirectory().absolutePath +
+                            "/$relativePath$displayName"
                     } else {
-                        folderParts.getOrPut(folderPath) { linkedMapOf() }[displayName.lowercase()] =
-                            LocalPartCandidate(
-                                displayName = displayName,
-                                uri = uri,
-                                embedded = embedded,
-                                fileSizeBytes = querySize(uri),
-                            )
+                        if (dataColumn >= 0) cursor.getString(dataColumn).orEmpty() else ""
                     }
+                    if (absolutePath.isBlank()) continue
+                    val mediaId = cursor.getLong(idColumn)
+                    rows[absolutePath] = ContentUris.withAppendedId(collection, mediaId)
                 }
-                folderParts.forEach { (folderPath, candidatesByPath) ->
-                    // Part order: disc/track tags when present (absent sorts
-                    // last), then natural filename order ("ch2" < "ch10").
-                    val ordered = candidatesByPath.values.sortedWith(
-                        compareBy<LocalPartCandidate> {
-                            it.embedded.discNumber.takeIf { n -> n > 0 } ?: Int.MAX_VALUE
-                        }.thenBy {
-                            it.embedded.trackNumber.takeIf { n -> n > 0 } ?: Int.MAX_VALUE
-                        }.thenComparator { a, b -> naturalOrder(a.displayName, b.displayName) },
-                    )
-                    val stableId = "folder:${folderPath.normalizedFolderHash()}"
-                    val stored = AudiobookProgressStore.read(AudiobookSource.Local, stableId)
-                    val duration = ordered.sumOf { it.embedded.durationMilliseconds.coerceAtLeast(0) }
-                        .takeIf { it > 0 } ?: stored.durationMilliseconds
-                    accepted[stableId] = Audiobook(
-                        id = stableId,
-                        source = AudiobookSource.Local,
-                        // The embedded album tag carries the actual book title
-                        // (chapter files title themselves per chapter); fall back
-                        // to the folder name when it's absent.
-                        title = ordered.firstNotNullOfOrNull {
-                            it.embedded.album.takeIf(String::isNotBlank)
-                        } ?: folderPath.substringAfterLast('/'),
-                        author = ordered.firstNotNullOfOrNull {
-                            it.embedded.author.takeIf(String::isNotBlank)
-                        }.orEmpty(),
-                        playbackReference = ordered.first().uri.toString(),
-                        durationMilliseconds = duration,
-                        positionMilliseconds = stored.positionMilliseconds.coerceAtMost(
-                            duration.takeIf { it > 0 } ?: Long.MAX_VALUE,
-                        ),
-                        playbackSpeed = stored.playbackSpeed,
-                        completed = stored.completed,
-                        lastPlayedAtMilliseconds = stored.lastPlayedAtMilliseconds,
-                        lastUpdatedAtMilliseconds = stored.lastUpdatedAtMilliseconds,
-                        fileSizeBytes = ordered.sumOf { it.fileSizeBytes },
-                        parts = ordered.map {
-                            AudiobookPart(
-                                playbackReference = it.uri.toString(),
-                                durationMilliseconds = it.embedded.durationMilliseconds,
-                                title = it.embedded.title.ifBlank {
-                                    it.displayName.removeSupportedSuffix()
-                                },
-                            )
-                        },
-                    )
-                }
-                addAll(accepted.values)
-            }.sortedBy { it.title.lowercase() }
-        } catch (_: SecurityException) {
-            return@withContext LocalScanResult.PermissionRequired
-        } catch (_: Exception) {
-            return@withContext if (folderExists) LocalScanResult.Empty else LocalScanResult.FolderMissing
+            }
         }
-
-        Log.d(TAG, "audiobooks folder found=$folderExists")
-        Log.d(TAG, "raw candidate count=${directCandidates?.size ?: books.size}")
-        Log.d(TAG, "local book count=${books.size}")
-        Log.d(TAG, "mp3 count=$mp3Count")
-        Log.d(TAG, "m4b count=$m4bCount")
-        when {
-            books.isNotEmpty() -> LocalScanResult.Success(books)
-            !folderExists -> LocalScanResult.FolderMissing
-            else -> LocalScanResult.Empty
-        }
+        return rows
     }
 
     private suspend fun requestMediaIndexing(files: List<File>): Map<String, Uri> {
@@ -407,22 +425,6 @@ object LocalBookRepository {
             } ?: emptyList()
         }.getOrDefault(emptyList())
 
-    private fun querySize(uri: Uri): Long = runCatching {
-        appContext.contentResolver.query(
-            uri,
-            arrayOf(OpenableColumns.SIZE),
-            null,
-            null,
-            null,
-        )?.use { cursor ->
-            if (cursor.moveToFirst()) {
-                cursor.getLong(cursor.getColumnIndexOrThrow(OpenableColumns.SIZE)).coerceAtLeast(0)
-            } else {
-                0L
-            }
-        } ?: 0L
-    }.getOrDefault(0L)
-
     private fun readMetadata(uri: Uri): EmbeddedMetadata {
         val retriever = MediaMetadataRetriever()
         return try {
@@ -437,7 +439,6 @@ object LocalBookRepository {
                 ?.substringBefore('/')?.trim()?.toIntOrNull() ?: 0
             val discNumber = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DISC_NUMBER)
                 ?.substringBefore('/')?.trim()?.toIntOrNull() ?: 0
-            Log.d(TAG, "metadata available=${title.isNotBlank() || author.isNotBlank()}")
             EmbeddedMetadata(title, author, album, duration, trackNumber, discNumber)
         } catch (_: Exception) {
             EmbeddedMetadata()
@@ -460,28 +461,113 @@ object LocalBookRepository {
      * "Series/Hemingway/ForWhomTheBellTolls"). Files directly inside Audiobooks/ return null
      * and stay standalone single-file books.
      */
-    private fun folderPathOf(
-        relativePath: String,
-        dataPath: String,
-        rootDirectory: File,
-    ): String? {
-        if (relativePath.isNotBlank()) {
-            val folder = relativePath.removePrefix("$AUDIOBOOKS_DIRECTORY/").trim('/')
-            return folder.takeIf(String::isNotBlank)
-        }
-        if (dataPath.isNotBlank()) {
-            val parent = File(dataPath).parentFile ?: return null
-            val relative = runCatching { parent.relativeTo(rootDirectory).invariantSeparatorsPath }
-                .getOrDefault("")
-            return relative.takeIf { it.isNotBlank() && it != "." }
-        }
-        return null
+    private fun folderPathOf(absolutePath: String, rootDirectory: File): String? {
+        val parent = File(absolutePath).parentFile ?: return null
+        val relative = runCatching { parent.relativeTo(rootDirectory).invariantSeparatorsPath }
+            .getOrDefault("")
+        return relative.takeIf { it.isNotBlank() && it != "." }
     }
 
     private fun String.normalizedFolderHash(): String {
         val bytes = MessageDigest.getInstance("SHA-256")
             .digest(lowercase().trim().toByteArray())
         return bytes.take(12).joinToString("") { "%02x".format(it) }
+    }
+
+    // --- scan metadata cache ------------------------------------------------
+
+    private const val SCAN_CACHE_PREFS = "scan_metadata_cache"
+    private const val SCAN_CACHE_KEY = "cache_v1"
+
+    private data class CachedMetadata(
+        val size: Long,
+        val mtimeMillis: Long,
+        val title: String = "",
+        val author: String = "",
+        val album: String = "",
+        val durationMilliseconds: Long = 0,
+        val trackNumber: Int = 0,
+        val discNumber: Int = 0,
+        val chapters: List<EmbeddedChapter> = emptyList(),
+        val chaptersParsed: Boolean = false,
+    ) {
+        fun toEmbeddedMetadata() = EmbeddedMetadata(
+            title = title,
+            author = author,
+            album = album,
+            durationMilliseconds = durationMilliseconds,
+            trackNumber = trackNumber,
+            discNumber = discNumber,
+        )
+    }
+
+    private fun cachePrefs() =
+        appContext.getSharedPreferences(SCAN_CACHE_PREFS, Context.MODE_PRIVATE)
+
+    private fun metadataCache(): MutableMap<String, CachedMetadata> {
+        metadataCache?.let { return it }
+        return decodeCache(cachePrefs().getString(SCAN_CACHE_KEY, null)).also { metadataCache = it }
+    }
+
+    private fun encodeCache(cache: Map<String, CachedMetadata>): String {
+        val root = JSONObject()
+        cache.forEach { (path, meta) ->
+            val chapters = JSONArray()
+            meta.chapters.forEach { chapter ->
+                chapters.put(JSONArray().put(chapter.title).put(chapter.startMs).put(chapter.endMs))
+            }
+            root.put(
+                path,
+                JSONObject()
+                    .put("size", meta.size)
+                    .put("mtime", meta.mtimeMillis)
+                    .put("title", meta.title)
+                    .put("author", meta.author)
+                    .put("album", meta.album)
+                    .put("duration", meta.durationMilliseconds)
+                    .put("track", meta.trackNumber)
+                    .put("disc", meta.discNumber)
+                    .put("chapters", chapters)
+                    .put("chaptersParsed", meta.chaptersParsed),
+            )
+        }
+        return root.toString()
+    }
+
+    private fun decodeCache(encoded: String?): MutableMap<String, CachedMetadata> {
+        if (encoded.isNullOrBlank()) return mutableMapOf()
+        return runCatching {
+            val root = JSONObject(encoded)
+            buildMap {
+                val keys = root.keys()
+                while (keys.hasNext()) {
+                    val path = keys.next()
+                    val o = root.getJSONObject(path)
+                    val chapters = buildList {
+                        val arr = o.getJSONArray("chapters")
+                        for (i in 0 until arr.length()) {
+                            val c = arr.getJSONArray(i)
+                            add(EmbeddedChapter(c.getString(0), c.getLong(1), c.getLong(2)))
+                        }
+                    }
+                    put(
+                        path,
+                        CachedMetadata(
+                            size = o.getLong("size"),
+                            mtimeMillis = o.getLong("mtime"),
+                            title = o.optString("title"),
+                            author = o.optString("author"),
+                            album = o.optString("album"),
+                            durationMilliseconds = o.optLong("duration"),
+                            trackNumber = o.optInt("track"),
+                            discNumber = o.optInt("disc"),
+                            chapters = chapters,
+                            chaptersParsed = o.optBoolean("chaptersParsed"),
+                        ),
+                    )
+                }
+            }.toMutableMap()
+        }.getOrDefault(mutableMapOf())
     }
 
     private data class LocalPartCandidate(

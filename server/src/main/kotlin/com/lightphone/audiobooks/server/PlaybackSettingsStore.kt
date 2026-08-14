@@ -23,6 +23,6 @@ object PlaybackSettingsStore {
             appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit()
                 .putBoolean(KEY_AUTO_PLAY_NEXT, value)
-                .commit()
+                .apply()
         }
 }

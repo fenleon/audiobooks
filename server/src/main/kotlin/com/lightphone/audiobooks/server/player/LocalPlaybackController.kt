@@ -1,8 +1,6 @@
 package com.lightphone.audiobooks.server.player
 
 import android.content.Context
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
 import com.lightphone.audiobooks.server.PlaybackForegroundService
 import com.lightphone.audiobooks.server.PlaybackSettingsStore
@@ -14,36 +12,48 @@ import com.thelightphone.sdk.audio.LightAudioPlayer
 import com.thelightphone.sdk.audio.LightAudioSource
 import com.thelightphone.sdk.audio.LightAudioUsage
 import com.thelightphone.sdk.audio.LightMediaMetadata
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 private const val TAG = "LocalPlayback"
 private const val PROGRESS_SAVE_INTERVAL_MILLISECONDS = 7_000L
 private const val END_EPSILON_MILLISECONDS = 1_500L
-private const val SILENT_FAILURE_POLLS = 6
+private const val SILENT_FAILURE_TIMEOUT_MILLISECONDS = 3_000L
 
 /**
  * Owns playback via the SDK's [LightAudioPlayer] (ExoPlayer queue) and keeps
  * [PlayerState] + the foreground service in sync. The queue is the whole book
  * (one item per part); the global timeline math in [MultiPartTimeline] maps
  * book positions to queue items.
+ *
+ * State is event-driven: the player's StateFlows (isPlaying, item index,
+ * resolved duration) drive updates, with a 1 s ticker **only while playing**
+ * for the time-based work (embedded-chapter boundaries, progress
+ * persistence). While paused there is no polling: the media session's
+ * position is extrapolated by the platform from the last transition.
  */
 object LocalPlaybackController {
     private lateinit var appContext: Context
     private lateinit var player: LightAudioPlayer
-    private val handler = Handler(Looper.getMainLooper())
-    private val mutableState = MutableStateFlow(PlayerState(diagnostic = "No local book loaded"))
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val mutableState = MutableStateFlow(PlayerState())
     private var partDurations = LongArray(0)
     private var activeBook: Audiobook? = null
     private var speed = 1f
     private var lastSavedAt = 0L
-    private var wasPlaying = false
     private var pendingSeekMilliseconds: Long? = null
-    private var silentFailureStreak = 0
     private var lastPartIndex = -1
     private var lastChapterPartIndex = -1
     private var lastChapterIndex = -1
+    private var lastResolvedDuration = 0L
 
     val state: StateFlow<PlayerState> = mutableState.asStateFlow()
 
@@ -51,6 +61,7 @@ object LocalPlaybackController {
         appContext = context.applicationContext
         player = LightAudioPlayer(appContext, LightAudioUsage.Speech)
         PlaybackMediaSession.init(appContext)
+        collectPlayerEvents()
     }
 
     fun open(book: Audiobook, autoPlay: Boolean = false) {
@@ -62,7 +73,6 @@ object LocalPlaybackController {
             PlaybackForegroundService.update(appContext, false)
             mutableState.value = mutableState.value.copy(
                 isPlaying = false,
-                diagnostic = "This audiobook could not be played.",
                 readiness = PlayerReadiness.Error,
             )
         }
@@ -99,6 +109,7 @@ object LocalPlaybackController {
             )
         }
         mutableState.value = PlayerState(
+            bookId = book.id,
             title = book.title,
             chapter = book.author.takeIf { it.isNotBlank() },
             positionSeconds = savedPosition / 1000.0,
@@ -108,15 +119,15 @@ object LocalPlaybackController {
             partCount = book.parts.size.coerceAtLeast(1),
             partTitle = book.parts.getOrNull(startPart)?.title,
             playbackSpeed = speed.toDouble(),
-            diagnostic = "Preparing…",
             readiness = PlayerReadiness.Preparing,
         )
         pendingSeekMilliseconds = null
+        lastResolvedDuration = 0L
         runCatching {
             player.setMediaQueue(items, startIndex = startPart.coerceIn(0, items.lastIndex))
             player.speed = speed
-            // Applied by the poll loop once the start item's duration resolves
-            // (LightAudioPlayer clamps seeks to a known duration).
+            // Applied once the start item's duration resolves (LightAudioPlayer
+            // clamps seeks to a known duration).
             pendingSeekMilliseconds = if (durationsKnown) {
                 locatePart(savedPosition, partDurations).positionMilliseconds
             } else {
@@ -128,20 +139,21 @@ object LocalPlaybackController {
             PlaybackForegroundService.update(appContext, false)
             mutableState.value = mutableState.value.copy(
                 isPlaying = false,
-                diagnostic = "This audiobook could not be played.",
                 readiness = PlayerReadiness.Error,
             )
+            PlaybackMediaSession.update(mutableState.value)
         }
         // Seed the embedded-chapter tracker at the resume position so the
-        // auto-play-off boundary pause never fires spuriously on the first poll.
+        // auto-play-off boundary pause never fires spuriously on the first tick.
         lastChapterPartIndex = startPart
         lastChapterIndex = chapterIndexAt(
             chaptersForPart(startPart),
             pendingSeekMilliseconds ?: 0L,
         )
+        applyPendingSeekIfResolved()
         updateState()
         if (autoPlay) play()
-        scheduleUpdates()
+        armSilentFailureCheck()
     }
 
     fun play() {
@@ -158,18 +170,13 @@ object LocalPlaybackController {
             seekTo(0L)
         }
         player.play()
-        PlaybackForegroundService.update(appContext, true)
-        PlaybackForegroundService.refresh(appContext)
-        updateState()
-        scheduleUpdates()
+        armSilentFailureCheck()
     }
 
     fun pause() {
         player.pause()
-        PlaybackForegroundService.update(appContext, false)
-        PlaybackForegroundService.refresh(appContext)
-        updateState()
-        persistProgress()
+        // The isPlaying collector takes it from here: foreground service down,
+        // progress persisted, state + media session mirrored.
     }
 
     /** Whether the given book is the one currently loaded on the player. */
@@ -194,11 +201,12 @@ object LocalPlaybackController {
             // boundary instead of flowing into the next chapter.
             if (!PlaybackSettingsStore.autoPlayNext) {
                 player.pause()
-                PlaybackForegroundService.update(appContext, false)
             }
         }
-        // Applied once the target item's duration resolves.
+        // Applied now when the target item's duration is already resolved,
+        // otherwise once its duration resolves.
         pendingSeekMilliseconds = part.positionMilliseconds
+        applyPendingSeekIfResolved()
         // A manual seek is not a natural part boundary; keep the boundary
         // tracker in sync so it only fires on real queue advancement.
         lastPartIndex = part.index
@@ -213,6 +221,7 @@ object LocalPlaybackController {
             positionSeconds = target / 1000.0,
             currentPartIndex = part.index,
         )
+        PlaybackMediaSession.update(mutableState.value)
         // Persist the seek target itself, not the player-derived position: the
         // target item's duration is still resolving right after skipToNext, so
         // the player-derived path would early-return and leave the *previous*
@@ -230,6 +239,7 @@ object LocalPlaybackController {
         speed = value.toFloat().coerceIn(0.5f, 2f)
         player.speed = speed
         mutableState.value = mutableState.value.copy(playbackSpeed = speed.toDouble())
+        PlaybackMediaSession.update(mutableState.value)
         persistProgress()
     }
 
@@ -267,16 +277,108 @@ object LocalPlaybackController {
         lastPartIndex = -1
         lastChapterPartIndex = -1
         lastChapterIndex = -1
+        lastResolvedDuration = 0L
         mutableState.value = PlayerState(
-            diagnostic = "No audiobook loaded",
             readiness = PlayerReadiness.Unavailable,
         )
         PlaybackMediaSession.update(mutableState.value)
     }
 
+    // --- event plumbing ------------------------------------------------------
+
+    private fun collectPlayerEvents() {
+        scope.launch {
+            player.isPlaying.collect { playing ->
+                if (playing) {
+                    PlaybackForegroundService.update(appContext, true)
+                } else {
+                    PlaybackForegroundService.update(appContext, false)
+                    persistProgress()
+                }
+                PlaybackForegroundService.refresh(appContext)
+                emitState()
+            }
+        }
+        scope.launch {
+            player.currentMediaItemIndex.collect { index ->
+                // With Auto-Play off, a queue advance is a chapter boundary:
+                // pause at the new part's start instead of flowing into it.
+                if (index > lastPartIndex && lastPartIndex >= 0 &&
+                    player.isPlaying.value && !PlaybackSettingsStore.autoPlayNext
+                ) {
+                    player.pause()
+                }
+                lastPartIndex = index
+                emitState()
+            }
+        }
+        scope.launch {
+            player.durationMs.collect { duration ->
+                // Emits on every position poll while playing; act on real changes.
+                if (duration > 0 && duration != lastResolvedDuration) {
+                    lastResolvedDuration = duration
+                    applyPendingSeekIfResolved()
+                    val index = player.currentMediaItemIndex.value.coerceAtLeast(0)
+                    if (index in partDurations.indices) partDurations[index] = duration
+                    emitState()
+                }
+            }
+        }
+        scope.launch {
+            player.positionMs.collect { position ->
+                val index = player.currentMediaItemIndex.value.coerceAtLeast(0)
+                mutableState.update {
+                    it.copy(positionSeconds = globalPartPosition(index, position, partDurations) / 1000.0)
+                }
+            }
+        }
+        // Time-based work only while playing; paused there is no periodic wake.
+        scope.launch {
+            while (scope.isActive) {
+                delay(1000)
+                if (player.isPlaying.value && activeBook != null) tickPlaying()
+            }
+        }
+    }
+
+    private fun tickPlaying() {
+        val index = player.currentMediaItemIndex.value.coerceAtLeast(0)
+        // With Auto-Play off, pause when playback crosses an embedded chapter
+        // end inside the current file (a natural chapter boundary, same
+        // semantics as a part ending). Re-seed the tracker whenever the
+        // current part changes.
+        if (!PlaybackSettingsStore.autoPlayNext) {
+            if (index != lastChapterPartIndex) {
+                lastChapterPartIndex = index
+                lastChapterIndex = chapterIndexAt(chaptersForPart(index), player.positionMs.value)
+            }
+            val chapters = chaptersForPart(index)
+            if (chapters.isNotEmpty() && lastChapterIndex >= 0) {
+                val currentChapter = chapterIndexAt(chapters, player.positionMs.value)
+                if (currentChapter > lastChapterIndex) player.pause()
+                lastChapterIndex = currentChapter
+            }
+        }
+        if (System.currentTimeMillis() - lastSavedAt >= PROGRESS_SAVE_INTERVAL_MILLISECONDS) {
+            persistProgress()
+        }
+    }
+
+    /** Updates [state] and mirrors it into the platform media session. */
+    private fun emitState() {
+        updateState()
+        PlaybackMediaSession.update(mutableState.value)
+    }
+
     private fun updateState() {
         val position = currentGlobalPosition()
-        val duration = totalDuration()
+        val resolvedTotal = totalDuration()
+        // Prefer the player-resolved timeline once known; until then keep the
+        // duration the state was opened with (partDurations start unresolved,
+        // and clobbering with 0 would show 0:00 — the old poll loop masked this
+        // by re-updating within half a second; the paused tool no longer polls).
+        val duration = resolvedTotal.takeIf { it > 0 }
+            ?: (mutableState.value.durationSeconds * 1000).toLong()
         val currentIndex = player.currentMediaItemIndex.value.coerceAtLeast(0)
         val playing = player.isPlaying.value
         val errored = mutableState.value.readiness == PlayerReadiness.Error
@@ -287,91 +389,37 @@ object LocalPlaybackController {
             partTitle = activeBook?.parts?.getOrNull(currentIndex)?.title,
             isPlaying = playing,
             playbackSpeed = speed.toDouble(),
-            diagnostic = if (errored) mutableState.value.diagnostic else "Local audiobook ready",
             readiness = if (errored) PlayerReadiness.Error else PlayerReadiness.Ready,
         )
-        PlaybackMediaSession.update(mutableState.value)
     }
 
-    private fun scheduleUpdates() {
-        handler.removeCallbacks(updateRunnable)
-        handler.post(updateRunnable)
+    /** Applies the pending seek once the target item's duration is resolved. */
+    private fun applyPendingSeekIfResolved() {
+        val pending = pendingSeekMilliseconds ?: return
+        if (player.durationMs.value > 0) {
+            player.seekTo(pending)
+            pendingSeekMilliseconds = null
+        }
     }
 
-    private val updateRunnable = object : Runnable {
-        override fun run() {
-            // Keep part durations accurate once the platform resolves them.
-            val index = player.currentMediaItemIndex.value
-            if (index in partDurations.indices) {
-                player.durationMs.value.takeIf { it > 0 }?.let { partDurations[index] = it }
-            }
-            // Apply a pending seek once the target item's duration is known.
-            if (pendingSeekMilliseconds != null && player.durationMs.value > 0) {
-                player.seekTo(pendingSeekMilliseconds!!)
-                pendingSeekMilliseconds = null
-            }
-            // With "Auto-Play: next chapter" off, stop when a part ends instead
-            // of flowing into the next one. The queue advances one index past
-            // the boundary, so pause right at the new part's start.
-            if (index > lastPartIndex && lastPartIndex >= 0 &&
-                player.isPlaying.value && !PlaybackSettingsStore.autoPlayNext
-            ) {
-                player.pause()
-                PlaybackForegroundService.update(appContext, false)
-            }
-            lastPartIndex = index
-            // With Auto-Play off, also pause when playback crosses an embedded
-            // chapter end inside the current file (a natural chapter boundary,
-            // same semantics as a part ending). Re-seed the tracker whenever
-            // the current part changes.
-            if (player.isPlaying.value && !PlaybackSettingsStore.autoPlayNext) {
-                if (index != lastChapterPartIndex) {
-                    lastChapterPartIndex = index
-                    lastChapterIndex = chapterIndexAt(chaptersForPart(index), player.positionMs.value)
-                }
-                val chapters = chaptersForPart(index)
-                if (chapters.isNotEmpty() && lastChapterIndex >= 0) {
-                    val currentChapter = chapterIndexAt(chapters, player.positionMs.value)
-                    if (currentChapter > lastChapterIndex) {
-                        player.pause()
-                        PlaybackForegroundService.update(appContext, false)
-                    }
-                    lastChapterIndex = currentChapter
-                }
-            }
-            updateState()
-            val playing = player.isPlaying.value
-            if (playing && System.currentTimeMillis() - lastSavedAt >= PROGRESS_SAVE_INTERVAL_MILLISECONDS) {
-                persistProgress()
-            }
-            // Queue ended: the platform reached the end of the last item.
-            if (wasPlaying && !playing && player.positionMs.value > 0 &&
-                player.durationMs.value > 0 &&
-                player.positionMs.value >= player.durationMs.value - END_EPSILON_MILLISECONDS
+    /**
+     * Flags "could not be played" if the queue item never resolves a duration
+     * (a silent load failure). One-shot per open/play, so there is no periodic
+     * checking while paused.
+     */
+    private fun armSilentFailureCheck() {
+        scope.launch {
+            delay(SILENT_FAILURE_TIMEOUT_MILLISECONDS)
+            if (activeBook != null && mutableState.value.readiness != PlayerReadiness.Error &&
+                player.durationMs.value == 0L && !player.isPlaying.value
             ) {
                 PlaybackForegroundService.update(appContext, false)
-                persistProgress()
+                mutableState.value = mutableState.value.copy(
+                    isPlaying = false,
+                    readiness = PlayerReadiness.Error,
+                )
+                PlaybackMediaSession.update(mutableState.value)
             }
-            wasPlaying = playing
-            // Silent load failure: the item never resolves a duration or plays.
-            if (!playing && player.durationMs.value == 0L && activeBook != null &&
-                mutableState.value.readiness != PlayerReadiness.Error
-            ) {
-                silentFailureStreak++
-                if (silentFailureStreak >= SILENT_FAILURE_POLLS) {
-                    silentFailureStreak = 0
-                    PlaybackForegroundService.update(appContext, false)
-                    mutableState.value = mutableState.value.copy(
-                        isPlaying = false,
-                        diagnostic = "This audiobook could not be played.",
-                        readiness = PlayerReadiness.Error,
-                    )
-                    PlaybackMediaSession.update(mutableState.value)
-                }
-            } else {
-                silentFailureStreak = 0
-            }
-            handler.postDelayed(this, 500)
         }
     }
 

@@ -2,13 +2,13 @@ package com.lightphone.audiobooks.server.player
 
 enum class PlayerReadiness {
     Preparing,
-    Buffering,
     Ready,
     Unavailable,
     Error,
 }
 
 data class PlayerState(
+    val bookId: String = "",
     val title: String = "Audiobook",
     val chapter: String? = null,
     val positionSeconds: Double = 0.0,
@@ -18,8 +18,5 @@ data class PlayerState(
     val partTitle: String? = null,
     val isPlaying: Boolean = false,
     val playbackSpeed: Double = 1.0,
-    val controlsFound: Boolean = false,
-    val pageUrl: String = "",
-    val diagnostic: String = "Waiting for player…",
     val readiness: PlayerReadiness = PlayerReadiness.Preparing,
 )

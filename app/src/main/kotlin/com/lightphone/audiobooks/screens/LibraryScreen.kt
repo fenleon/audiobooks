@@ -64,8 +64,8 @@ class LibraryViewModel : LightViewModel<Unit>() {
     }
 
     private companion object {
-        const val EMPTY_REFRESH_RETRIES = 6
-        const val EMPTY_REFRESH_DELAY_MS = 1_500L
+        const val EMPTY_REFRESH_RETRIES = 3
+        const val EMPTY_REFRESH_DELAY_MS = 1_000L
     }
 }
 

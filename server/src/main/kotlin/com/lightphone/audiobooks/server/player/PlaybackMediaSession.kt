@@ -44,8 +44,7 @@ object PlaybackMediaSession {
         if (!::session.isInitialized) return
         val playState = when {
             state.readiness == PlayerReadiness.Error -> PlaybackState.STATE_ERROR
-            state.readiness == PlayerReadiness.Preparing ||
-                state.readiness == PlayerReadiness.Buffering -> PlaybackState.STATE_BUFFERING
+            state.readiness == PlayerReadiness.Preparing -> PlaybackState.STATE_BUFFERING
             state.isPlaying -> PlaybackState.STATE_PLAYING
             else -> PlaybackState.STATE_PAUSED
         }

@@ -34,13 +34,11 @@ data class Audiobook(
     val completed: Boolean = false,
     val lastPlayedAtMilliseconds: Long = 0,
     val lastUpdatedAtMilliseconds: Long = 0,
-    val progressPercentOverride: Int? = null,
-    val dueText: String = "",
     val fileSizeBytes: Long = 0,
     val parts: List<AudiobookPart> = emptyList(),
 ) {
     val progressPercent: Int
-        get() = progressPercentOverride ?: if (durationMilliseconds > 0) {
+        get() = if (durationMilliseconds > 0) {
             ((positionMilliseconds * 100) / durationMilliseconds).toInt().coerceIn(0, 100)
         } else {
             0

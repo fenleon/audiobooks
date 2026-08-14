@@ -81,17 +81,27 @@ class PlayerViewModel(
         stopPolling()
     }
 
+    /**
+     * Adaptive polling: 1 s while playing, and it stops itself once the book is
+     * paused (the position is static and nothing else changes server-side).
+     * Each user command re-reads state once and restarts the loop.
+     */
     private fun startPolling() {
         stopPolling()
         pollJob = viewModelScope.launch {
             while (isActive) {
-                state.value = MediaClient.playbackState()
-                // A book reopened mid-playback (e.g. via the notification) counts
-                // as played too.
-                if (state.value?.playing == true) hasPlayed.value = true
-                delay(500)
+                refreshOnce()
+                if (state.value?.playing != true) break
+                delay(POLL_INTERVAL_MS)
             }
         }
+    }
+
+    private suspend fun refreshOnce() {
+        state.value = MediaClient.playbackState()
+        // A book reopened mid-playback (e.g. via the notification) counts
+        // as played too.
+        if (state.value?.playing == true) hasPlayed.value = true
     }
 
     private fun stopPolling() {
@@ -108,17 +118,27 @@ class PlayerViewModel(
                 hasPlayed.value = true
                 MediaClient.play(book.id)
             }
+            refreshOnce()
+            startPolling()
         }
     }
 
     fun seekBy(deltaMilliseconds: Long) {
         val current = state.value?.positionMs ?: return
-        viewModelScope.launch { MediaClient.seekTo(current + deltaMilliseconds) }
+        viewModelScope.launch {
+            MediaClient.seekTo(current + deltaMilliseconds)
+            refreshOnce()
+            startPolling()
+        }
     }
 
     /** Seeks on the book's global timeline (embedded-chapter jumps land here). */
     fun seekTo(positionMs: Long) {
-        viewModelScope.launch { MediaClient.seekTo(positionMs) }
+        viewModelScope.launch {
+            MediaClient.seekTo(positionMs)
+            refreshOnce()
+            startPolling()
+        }
     }
 
     fun seekToFraction(fraction: Float) {
@@ -129,16 +149,30 @@ class PlayerViewModel(
         if (duration <= 0) return
         viewModelScope.launch {
             MediaClient.seekTo(start + (duration * fraction.coerceIn(0f, 1f)).toLong())
+            refreshOnce()
+            startPolling()
         }
     }
 
     /** Jumps to a chapter on the loaded book, preserving the play/pause state. */
     fun seekToPart(index: Int) {
-        viewModelScope.launch { MediaClient.seekToPart(index) }
+        viewModelScope.launch {
+            MediaClient.seekToPart(index)
+            refreshOnce()
+            startPolling()
+        }
     }
 
     fun setSpeed(speed: Float) {
-        viewModelScope.launch { MediaClient.setSpeed(speed) }
+        viewModelScope.launch {
+            MediaClient.setSpeed(speed)
+            refreshOnce()
+            startPolling()
+        }
+    }
+
+    private companion object {
+        const val POLL_INTERVAL_MS = 1_000L
     }
 }
 

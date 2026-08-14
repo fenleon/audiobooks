@@ -1,14 +1,8 @@
 package com.lightphone.audiobooks.server.library
 
 import android.content.Context
-import com.lightphone.audiobooks.server.player.PlayerState
-import java.util.concurrent.ConcurrentHashMap
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 
 private const val PREFERENCES_NAME = "local_audiobook_progress"
-private const val SAVE_INTERVAL_MILLISECONDS = 7_000L
 
 data class AudiobookProgress(
     val positionMilliseconds: Long = 0,
@@ -20,38 +14,17 @@ data class AudiobookProgress(
     val playbackReference: String = "",
     val title: String = "",
     val author: String = "",
-    val progressPercentOverride: Int? = null,
-    val dueText: String = "",
 )
-
-data class PersistedActiveAudiobook(
-    val source: AudiobookSource,
-    val id: String,
-    val playbackReference: String,
-    val title: String,
-    val author: String,
-    val progress: AudiobookProgress,
-) {
-    val qualifiedId: String
-        get() = AudiobookProgressStore.qualifiedId(source, id)
-}
 
 /** Durable, source-independent progress and ordering metadata. */
 object AudiobookProgressStore {
     private lateinit var appContext: Context
-    private val latest = ConcurrentHashMap<String, Pair<Audiobook, PlayerState>>()
-    private val lastWrittenAt = ConcurrentHashMap<String, Long>()
-    private val mutableActiveAudiobook = MutableStateFlow<PersistedActiveAudiobook?>(null)
-
-    val activeAudiobook: StateFlow<PersistedActiveAudiobook?> =
-        mutableActiveAudiobook.asStateFlow()
 
     fun init(context: Context) {
         appContext = context.applicationContext
-        mutableActiveAudiobook.value = lastActiveAudiobook()
     }
 
-    fun qualifiedId(source: AudiobookSource, id: String): String = "${source.name}:$id"
+    private fun qualifiedId(source: AudiobookSource, id: String): String = "${source.name}:$id"
 
     fun read(source: AudiobookSource, id: String): AudiobookProgress {
         val preferences = preferences()
@@ -74,55 +47,11 @@ object AudiobookProgressStore {
             playbackReference = preferences.getString("$key.reference", "").orEmpty(),
             title = preferences.getString("$key.title", "").orEmpty(),
             author = preferences.getString("$key.author", "").orEmpty(),
-            progressPercentOverride = preferences.getInt("$key.progressPercent", -1)
-                .takeIf { it >= 0 },
-            dueText = preferences.getString("$key.dueText", "").orEmpty(),
         )
-    }
-
-    fun markOpened(book: Audiobook): AudiobookProgress {
-        val now = System.currentTimeMillis()
-        val current = read(book.source, book.id)
-        val updated = current.copy(
-            lastPlayedAtMilliseconds = now,
-            lastUpdatedAtMilliseconds = now,
-            playbackReference = book.playbackReference,
-            title = book.title,
-            author = book.author,
-            progressPercentOverride = book.progressPercentOverride,
-            dueText = book.dueText,
-        )
-        write(book.source, book.id, updated)
-        preferences().edit()
-            .putString("last.qualifiedId", qualifiedId(book.source, book.id))
-            .putString("last.source", book.source.name)
-            .putString("last.id", book.id)
-            .putString("last.reference", book.playbackReference)
-            .putString("last.title", book.title)
-            .putString("last.author", book.author)
-            .commit()
-        mutableActiveAudiobook.value = lastActiveAudiobook()
-        return updated
-    }
-
-    fun lastActiveQualifiedId(): String? = lastActiveAudiobook()?.qualifiedId
-
-    fun clearLastActiveIfMatches(source: AudiobookSource, id: String) {
-        if (lastActiveQualifiedId() != qualifiedId(source, id)) return
-        preferences().edit()
-            .remove("last.qualifiedId")
-            .remove("last.source")
-            .remove("last.id")
-            .remove("last.reference")
-            .remove("last.title")
-            .remove("last.author")
-            .commit()
-        mutableActiveAudiobook.value = null
     }
 
     /** Forgets all stored progress/metadata for a book (used when it is deleted). */
     fun clear(source: AudiobookSource, id: String) {
-        clearLastActiveIfMatches(source, id)
         val key = qualifiedId(source, id)
         val editor = preferences().edit()
             .remove("$key.position")
@@ -134,8 +63,6 @@ object AudiobookProgressStore {
             .remove("$key.reference")
             .remove("$key.title")
             .remove("$key.author")
-            .remove("$key.progressPercent")
-            .remove("$key.dueText")
         // Legacy key layout used pre-qualified-id migration for local books.
         if (source == AudiobookSource.Local) {
             editor
@@ -145,55 +72,7 @@ object AudiobookProgressStore {
                 .remove("$id.completed")
                 .remove("$id.updated")
         }
-        editor.commit()
-    }
-
-    fun saveMetadata(book: Audiobook) {
-        val existing = read(book.source, book.id)
-        write(
-            book.source,
-            book.id,
-            existing.copy(
-                playbackReference = book.playbackReference,
-                title = book.title,
-                author = book.author,
-                progressPercentOverride = book.progressPercentOverride,
-                dueText = book.dueText,
-            ),
-        )
-    }
-
-    fun lastActiveAudiobook(): PersistedActiveAudiobook? {
-        val preferences = preferences()
-        val qualified = preferences.getString("last.qualifiedId", null)
-            ?: migrateLegacyLastActive()
-            ?: return null
-        val source = preferences.getString("last.source", null)
-            ?.let { runCatching { AudiobookSource.valueOf(it) }.getOrNull() }
-            ?: AudiobookSource.entries.firstOrNull { qualified.startsWith("${it.name}:") }
-            ?: return null
-        val id = preferences.getString("last.id", null)
-            ?.takeIf { it.isNotBlank() }
-            ?: qualified.removePrefix("${source.name}:").takeIf { it.isNotBlank() }
-            ?: return null
-        val progress = read(source, id)
-        return PersistedActiveAudiobook(
-            source = source,
-            id = id,
-            playbackReference = preferences.getString("last.reference", null)
-                ?: progress.playbackReference,
-            title = preferences.getString("last.title", null) ?: progress.title,
-            author = preferences.getString("last.author", null) ?: progress.author,
-            progress = progress,
-        )
-    }
-
-    fun recordSnapshot(book: Audiobook, state: PlayerState, force: Boolean = false) {
-        latest[qualifiedId(book.source, book.id)] = book to state
-        val now = System.currentTimeMillis()
-        val key = qualifiedId(book.source, book.id)
-        if (!force && now - (lastWrittenAt[key] ?: 0L) < SAVE_INTERVAL_MILLISECONDS) return
-        persistSnapshot(book, state, now)
+        editor.apply()
     }
 
     fun saveLocal(
@@ -202,23 +81,9 @@ object AudiobookProgressStore {
         durationMilliseconds: Long,
         playbackSpeed: Float,
     ) {
-        val state = PlayerState(
-            title = book.title,
-            positionSeconds = positionMilliseconds / 1000.0,
-            durationSeconds = durationMilliseconds / 1000.0,
-            playbackSpeed = playbackSpeed.toDouble(),
-        )
-        recordSnapshot(book, state, force = true)
-    }
-
-    fun flushLatest() {
-        latest.values.forEach { (book, state) -> persistSnapshot(book, state, System.currentTimeMillis()) }
-    }
-
-    private fun persistSnapshot(book: Audiobook, state: PlayerState, now: Long) {
         val existing = read(book.source, book.id)
-        val duration = (state.durationSeconds * 1000).toLong().coerceAtLeast(0)
-        var position = (state.positionSeconds * 1000).toLong().coerceAtLeast(0)
+        val duration = durationMilliseconds.coerceAtLeast(0)
+        var position = positionMilliseconds.coerceAtLeast(0)
         val completed = duration > 0 && duration - position.coerceAtMost(duration) <= 30_000L
         // A finished book stores exactly its full duration, so the library's
         // percent reads 100% (the player-derived end position can otherwise
@@ -230,17 +95,14 @@ object AudiobookProgressStore {
             existing.copy(
                 positionMilliseconds = position,
                 durationMilliseconds = duration.takeIf { it > 0 } ?: existing.durationMilliseconds,
-                playbackSpeed = state.playbackSpeed.toFloat().takeIf { it > 0 } ?: existing.playbackSpeed,
+                playbackSpeed = playbackSpeed.takeIf { it > 0 } ?: existing.playbackSpeed,
                 completed = completed,
-                lastUpdatedAtMilliseconds = now,
+                lastUpdatedAtMilliseconds = System.currentTimeMillis(),
                 playbackReference = book.playbackReference,
                 title = book.title,
                 author = book.author,
-                progressPercentOverride = book.progressPercentOverride,
-                dueText = book.dueText,
             ),
         )
-        lastWrittenAt[qualifiedId(book.source, book.id)] = now
     }
 
     private fun write(source: AudiobookSource, id: String, progress: AudiobookProgress) {
@@ -255,20 +117,7 @@ object AudiobookProgressStore {
             .putString("$key.reference", progress.playbackReference)
             .putString("$key.title", progress.title)
             .putString("$key.author", progress.author)
-            .putInt("$key.progressPercent", progress.progressPercentOverride ?: -1)
-            .putString("$key.dueText", progress.dueText)
-            .commit()
-    }
-
-    private fun migrateLegacyLastActive(): String? {
-        val preferences = preferences()
-        val id = preferences.getString("last.id", null) ?: return null
-        val source = runCatching {
-            AudiobookSource.valueOf(preferences.getString("last.source", "").orEmpty())
-        }.getOrNull() ?: return null
-        return qualifiedId(source, id).also { qualified ->
-            preferences.edit().putString("last.qualifiedId", qualified).commit()
-        }
+            .apply()
     }
 
     private fun preferences() =

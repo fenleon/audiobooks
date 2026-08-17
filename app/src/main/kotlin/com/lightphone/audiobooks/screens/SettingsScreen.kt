@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -103,13 +102,7 @@ class SettingsScreen(sealedActivity: SealedLightActivity) :
                         // top-aligned so it lines up with the main label, not
                         // centered between the label and the caption.
                         Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                // The Heading line box is taller than its ink
-                                // (Akkurat sits high in the box); nudge the
-                                // toggle up so it centers on the label glyphs,
-                                // like the native switch-on-label alignment.
-                                .offset(y = (-6).dp),
+                            modifier = Modifier.size(36.dp),
                             contentAlignment = Alignment.Center,
                         ) {
                             LightIcon(

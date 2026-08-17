@@ -98,9 +98,10 @@ class LibraryScreen(sealedActivity: SealedLightActivity) :
                         .fillMaxSize()
                         .background(LightThemeTokens.colors.background),
                 ) {
-                    // The Library has no top bar; reserve the SDK top bar's
-                    // height so the first row lines up with other screens.
-                    Spacer(modifier = Modifier.height(3f.gridUnitsAsDp()))
+                    // The Library has no top bar; reserve the same height as
+                    // the side (scrollbar) buffer so the top gap matches the
+                    // gutters around the list.
+                    Spacer(modifier = Modifier.height(2f.gridUnitsAsDp()))
                     Box(modifier = Modifier.weight(1f)) {
                         when {
                             loading && books.isEmpty() -> StatusText("Scanning your library…")

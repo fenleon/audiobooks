@@ -4,8 +4,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
@@ -35,6 +37,7 @@ import com.thelightphone.sdk.ui.LightTheme
 import com.thelightphone.sdk.ui.LightThemeController
 import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.lightClickable
+import com.thelightphone.sdk.ui.gridUnitsAsDp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -95,6 +98,9 @@ class LibraryScreen(sealedActivity: SealedLightActivity) :
                         .fillMaxSize()
                         .background(LightThemeTokens.colors.background),
                 ) {
+                    // The Library has no top bar; reserve the SDK top bar's
+                    // height so the first row lines up with other screens.
+                    Spacer(modifier = Modifier.height(3f.gridUnitsAsDp()))
                     Box(modifier = Modifier.weight(1f)) {
                         when {
                             loading && books.isEmpty() -> StatusText("Scanning your library…")

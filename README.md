@@ -6,9 +6,9 @@ Audiobooks is an audiobook player built specifically for the Light Phone III. It
 
 Instead of treating audiobooks as another streaming platform, Audiobooks treats them as books. Your library lives on your device, and the player stays out of the way so you can focus on listening.
 
-There are no recommendations, storefronts, advertisements, social features, or cover art—just your books.
+There are no recommendations, storefronts, advertisements, social features, or cover art — just your books.
 
-Built with the Light ethos: **stripped back, calm, and intentionally small**. Books load from the device — a single shared folder, no accounts, no cloud. Audiobooks is a **real LightOS tool**: a thin interface built on the Light SDK design system, with a companion app hosting the on-device library, scanning, and playback — the same tool + companion architecture Light's own music and podcast tools use, so background listening survives the tool closing.
+Built with the Light ethos: **stripped back, calm, and intentionally small**. Books load from the device — a single shared folder, no accounts, no cloud. Audiobooks is a **real LightOS tool**: a thin interface built on the Light SDK design system, with a companion app hosting the on-device library and scanning — playback runs inside the tool on the SDK's detached audio player, so background listening survives the tool closing.
 
 **Heritage:** Audiobooks began as a fork of [Bard](https://github.com/sjkornelsen/bard) by sjkornelsen, rebuilt around local-only playback.
 
@@ -60,8 +60,9 @@ Audiobooks plays audiobooks stored on your device, without a cloud account or su
 - Rewind on resume: after a long pause (>5 min), playback jumps back 15 s so you re-orient (baked in — no toggle)
 - Persistent listening progress across the entire book
 - Resume playback
-- Recent-first library ordering
+- Alphabetical library ordering (by book title)
 - Background playback with a media notification and lockscreen/system media controls
+- In-app volume panel on the hardware volume buttons — including a connected Bluetooth device's volume buttons
 
 Audiobooks scans the shared `Audiobooks` folder at any depth. Individual audio files (any supported format) directly inside `Audiobooks/` are treated as standalone books. Every folder inside `Audiobooks/` is treated as a single audiobook, with all supported audio files inside it played continuously in natural order. Audiobooks never copies books into app-private storage.
 
@@ -77,7 +78,7 @@ Audiobooks scans the shared `Audiobooks` folder at any depth. Individual audio f
   - copy a single audio file (MP3, M4B, M4A, AAC, OGG, OGA, OPUS, FLAC, WAV) directly into the Audiobooks folder, or
   - create one folder per audiobook and place its audio files inside.
 
-Files are played in alphabetical order, so numbering them (01, 02, 03, …) is recommended.
+Files play in embedded track order (fallback: natural filename order), so numbering them (01, 02, 03, …) is recommended.
 
 4. In Audiobooks, open the app — the library lists every book found in the folder (tap the settings icon in the library's bottom bar, then "Scan Library Now", to rescan).
 
@@ -91,8 +92,8 @@ Audiobooks is currently designed for the Light Phone III and Android 13 or newer
 
 Current limitations include:
 
-- Multi-file local audiobooks play in embedded track order (disc/track tags, fallback: natural filename order); chapter titles come from embedded metadata (fallback: file name).
-- Hardware volume buttons are not wired to playback volume yet (on the roadmap — see `WORKLOG.md`).
+- Books are removed by deleting their files on the device — there is no in-app delete UI yet.
+- The companion app is required: the production LightOS server (`com.lightos`) does not implement Audiobooks' media methods yet, so the tool needs its companion installed alongside it.
 
 ---
 
@@ -102,7 +103,7 @@ Audiobooks is a native Android application written in Kotlin using Jetpack Compo
 
 Its architecture is intentionally simple, with separate components responsible for local audiobook discovery, playback, progress persistence, and the interface.
 
-The UI is built on the Light SDK's design system (`sdk:ui`) and playback runs on the SDK's `LightAudioPlayer` (ExoPlayer). Audiobooks is a standalone Gradle project that consumes the SDK as an included build — see `settings.gradle.kts`. It is a **real LightOS tool**: the `:app` module is built with the SDK's tool plugin (launched from the LightOS toolbox), and the `:server` module is a plain companion app that hosts the SDK service, the local library scan, and the playback foreground service — the privileged work the tool plugin forbids in the tool itself. The tool is a thin UI over the companion, so background playback survives the tool closing.
+The UI is built on the Light SDK's design system (`sdk:ui`) and playback runs on the SDK's detached `LightAudioPlayer` (ExoPlayer). Audiobooks is a standalone Gradle project that consumes the SDK as an included build — see `settings.gradle.kts`. It is a **real LightOS tool**: the `:app` module is built with the SDK's tool plugin (launched from the LightOS toolbox) and owns playback through the SDK's detached audio service — background listening and the media notification live with the tool. The `:server` module is a plain companion app that hosts the SDK service, the library scan, and the media file store — the privileged work the tool plugin forbids in the tool itself.
 
 ---
 
@@ -110,12 +111,12 @@ The UI is built on the Light SDK's design system (`sdk:ui`) and playback runs on
 
 The tool talks to the companion over the SDK's binder using **media methods that are additive to the SDK** — they were added to `sdk:shared`'s `LightServiceMethod` and are implemented by the companion. The production LightOS server (`com.lightos`) does **not** implement these yet; the companion is the reference implementation, and the plan is for Light to ship the same surface so tools can target `com.lightos` directly. The companion provides:
 
-- **The media RPC surface** — `GetBooks`, `ScanLibrary`, `OpenBook`/`PlayBook`, `PausePlayback`, `SeekTo`, `SeekToPart`, `SetPlaybackSpeed`, `GetPlaybackState`, `GetAutoPlayNext`/`SetAutoPlayNext`, and `DeleteBook`.
-- **Library scanning** — a recursive scan of `/sdcard/Audiobooks/` (any depth) into single-file and folder books, with titles and chapter names read from embedded metadata (album/title tags) rather than file names.
-- **Continuous multi-part playback** — folder books play across all their files on a single global timeline, so seeking, progress, and chapter boundaries work book-wide rather than per file.
-- **Chapter-aware playback** — per-chapter seek, "Chapter N of M" tracking, and an optional Auto-Play "next chapter" toggle that pauses at chapter boundaries when off. Single-file books read their own embedded chapters (MP3 CHAP frames, M4B bookmarks) for the same experience folder books get per file.
-- **Background playback** — a foreground `Service` plus a media session and media-button receiver for lockscreen/system controls. The tool plugin forbids foreground services in the tool, so the companion owns playback — background listening survives the tool closing (the same model as LightOS's own music and podcast tools).
-- **Persistent progress** — listening position, speed, and ordering survive restarts, stored per book.
+- **The media RPC surface** — `GetBooks`, `ScanLibrary`, `DeleteBook`, `GetAutoPlayNext`/`SetAutoPlayNext`, `GetPlaybackSpeed`/`SetPlaybackSpeed`, `GetVolumeLevel`, `GetBluetoothConnected`, `WaitForVolumeChange`, and `SaveProgress`.
+- **Library scanning** — a recursive, incremental scan of `/sdcard/Audiobooks/` (any depth) into single-file and folder books, with titles and chapter names read from embedded metadata (album/title tags) rather than file names.
+- **Media file serving** — a content provider serves the library files to the tool's player.
+- **Chapter metadata** — embedded chapters (MP3 CHAP frames, M4B bookmarks) are parsed into the book model, so single-file books get the same chapter navigation folder books get per file.
+- **Settings & progress persistence** — the Auto-Play "next chapter" toggle, the global playback speed, listening positions, and library ordering survive restarts (stored companion-side, applied tool-side).
+- **Bluetooth & volume** — the connected-BT state behind the library's Bluetooth icon, and the volume-change long-poll that makes a Bluetooth device's volume buttons show the in-app volume panel instantly.
 
 ---
 

@@ -15,7 +15,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
+import com.lightphone.audiobooks.AppLightViewModel
 import com.lightphone.audiobooks.MediaClient
+import com.lightphone.audiobooks.VolumePanelOverlay
 import com.thelightphone.sdk.InitialScreen
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
@@ -37,7 +39,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 
-class LibraryViewModel : LightViewModel<Unit>() {
+class LibraryViewModel : AppLightViewModel<Unit>() {
 
     val books = MutableStateFlow<List<LightServiceMethod.GetBooks.Book>>(emptyList())
     val loading = MutableStateFlow(true)
@@ -83,39 +85,53 @@ class LibraryScreen(sealedActivity: SealedLightActivity) :
         val books by viewModel.books.collectAsState()
         val loading by viewModel.loading.collectAsState()
         val themeColors by LightThemeController.colors.collectAsState()
+        val volumePanel by viewModel.volumePanel.collectAsState()
 
         LightTheme(colors = themeColors) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(LightThemeTokens.colors.background),
-            ) {
-                Box(modifier = Modifier.weight(1f)) {
-                    when {
-                        loading && books.isEmpty() -> StatusText("Scanning your library…")
-                        books.isEmpty() -> StatusText(
-                            "No books found. Copy audiobooks into the Audiobooks folder on your device.",
-                        )
-                        else -> LightScrollView {
-                            books.forEach { book ->
-                                BookRow(
-                                    book = book,
-                                    onOpen = { openPlayer(book) },
-                                )
+            Box(modifier = Modifier.fillMaxSize()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(LightThemeTokens.colors.background),
+                ) {
+                    Box(modifier = Modifier.weight(1f)) {
+                        when {
+                            loading && books.isEmpty() -> StatusText("Scanning your library…")
+                            books.isEmpty() -> StatusText(
+                                "No books found. Copy audiobooks into the Audiobooks folder on your device.",
+                            )
+                            else -> LightScrollView {
+                                books.forEach { book ->
+                                    BookRow(
+                                        book = book,
+                                        onOpen = { openPlayer(book) },
+                                    )
+                                }
                             }
                         }
                     }
-                }
-                LightBottomBar(
-                    modifier = Modifier.navigationBarsPadding(),
-                    items = listOf(
-                        LightBarButton.LightIcon(
-                            icon = LightIcons.SETTINGS,
-                            onClick = { openSettings() },
-                            contentDescription = "Settings",
+                    LightBottomBar(
+                        modifier = Modifier.navigationBarsPadding(),
+                        items = listOf(
+                            LightBarButton.LightIcon(
+                                icon = LightIcons.SETTINGS,
+                                onClick = { openSettings() },
+                                contentDescription = "Settings",
+                            ),
+                            null,
+                            LightBarButton.LightIcon(
+                                icon = LightIcons.BLUETOOTH,
+                                onClick = { openBluetoothSettings() },
+                                contentDescription = "Bluetooth settings",
+                            ),
                         ),
-                        null,
-                    ),
+                    )
+                }
+                // Full-screen overlay on top of everything (the panel is a
+                // visual replica — not interactive).
+                VolumePanelOverlay(
+                    state = volumePanel,
+                    onDismiss = { viewModel.dismissVolumePanel() },
                 )
             }
         }
@@ -127,6 +143,14 @@ class LibraryScreen(sealedActivity: SealedLightActivity) :
 
     private fun openSettings() {
         navigateTo(screenFactory = { SettingsScreen(it) })
+    }
+
+    /** The companion (which can't launch activities from the background) hosts
+     *  a transparent activity that opens the system Bluetooth settings. */
+    private fun openBluetoothSettings() {
+        startServerActivity(
+            "com.lightphone.audiobooks.server/com.lightphone.audiobooks.server.BluetoothSettingsActivity",
+        )
     }
 }
 
@@ -145,7 +169,10 @@ private fun BookRow(
         modifier = Modifier
             .fillMaxWidth()
             .lightClickable(onClick = onOpen)
-            .padding(horizontal = 24.dp, vertical = 14.dp),
+            // Left margin only: the scroll view already reserves the right
+            // gutter, so a symmetric padding would double-inset the row and
+            // leave the percent floating off the right edge.
+            .padding(start = 24.dp, top = 14.dp, bottom = 14.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),

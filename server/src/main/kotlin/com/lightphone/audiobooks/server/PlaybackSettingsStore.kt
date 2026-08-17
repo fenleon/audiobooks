@@ -3,8 +3,9 @@ package com.lightphone.audiobooks.server
 import android.content.Context
 
 /**
- * Persistent playback preferences, owned by the companion (playback runs
- * here; the tool reads/writes them over the SDK binder).
+ * Persistent playback preferences. Playback runs in the tool (SDK detached
+ * audio); the companion stores the shared settings, which the tool reads and
+ * writes over the SDK binder.
  */
 object PlaybackSettingsStore {
     private lateinit var appContext: Context

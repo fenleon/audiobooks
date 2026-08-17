@@ -1,6 +1,7 @@
 package com.lightphone.audiobooks.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -11,8 +12,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
+import com.lightphone.audiobooks.AppLightViewModel
 import com.lightphone.audiobooks.MediaClient
 import com.lightphone.audiobooks.formatSpeed
+import com.lightphone.audiobooks.VolumePanelOverlay
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
@@ -31,7 +34,7 @@ import com.thelightphone.sdk.ui.lightClickable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 
-class SpeedPickerViewModel : LightViewModel<Float>() {
+class SpeedPickerViewModel : AppLightViewModel<Float>() {
 
     val speeds = listOf(0.5f, 1.0f, 1.25f, 1.5f, 2.0f)
     val current = MutableStateFlow(1.0f)
@@ -39,7 +42,7 @@ class SpeedPickerViewModel : LightViewModel<Float>() {
     override fun onScreenShow(screen: SimpleLightScreen<Float>) {
         super.onScreenShow(screen)
         viewModelScope.launch {
-            current.value = MediaClient.playbackState()?.speed ?: 1.0f
+            current.value = MediaClient.playbackSpeed() ?: 1.0f
         }
     }
 }
@@ -61,22 +64,24 @@ class SpeedPickerScreen(sealedActivity: SealedLightActivity) :
     override fun Content() {
         val current by viewModel.current.collectAsState()
         val themeColors by LightThemeController.colors.collectAsState()
+        val volumePanel by viewModel.volumePanel.collectAsState()
 
         LightTheme(colors = themeColors) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(LightThemeTokens.colors.background),
-            ) {
-                LightTopBar(
-                    leftButton = LightBarButton.LightIcon(
-                        icon = LightIcons.BACK,
-                        onClick = { goBack() },
-                        contentDescription = "Back",
-                    ),
-                    center = LightTopBarCenter.Text("Playback Speed"),
-                )
-                LightScrollView {
+            Box(modifier = Modifier.fillMaxSize()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(LightThemeTokens.colors.background),
+                ) {
+                    LightTopBar(
+                        leftButton = LightBarButton.LightIcon(
+                            icon = LightIcons.BACK,
+                            onClick = { goBack() },
+                            contentDescription = "Back",
+                        ),
+                        center = LightTopBarCenter.Text("Playback Speed"),
+                    )
+                    LightScrollView {
                     viewModel.speeds.forEach { speed ->
                         LightText(
                             text = formatSpeed(speed),
@@ -91,7 +96,14 @@ class SpeedPickerScreen(sealedActivity: SealedLightActivity) :
                         )
                     }
                 }
+                // Full-screen overlay on top of everything (the panel is a
+                // visual replica — not interactive).
+                VolumePanelOverlay(
+                    state = volumePanel,
+                    onDismiss = { viewModel.dismissVolumePanel() },
+                )
             }
         }
+    }
     }
 }

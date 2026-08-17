@@ -106,3 +106,113 @@ chapters — the same experience folder books get per file today.
 - Parser cost on every scan: consider caching chapter data if scan latency
   on large M4Bs matters (store in `AudiobookProgressStore` or a scan cache).
 - `chpl` timestamps are in 100 ns units → divide by 10 000 for ms.
+
+---
+
+# PLAN — Detached-audio refactor (playback into the tool)
+
+Status: **implemented 2026-08-17** (see WORKLOG 2026-08-17 for the full
+verification log). Deviations from this proposal: `GetPlaybackState` and the
+playback transport methods (`PlayBook`/`OpenBook`/`PausePlayback`/`SeekTo`/
+`SeekToPart`) were **removed** rather than kept — playback is tool-side now, so
+`PlayerSession` (process memory) replaced them for reopen-to-player and the
+chapters highlight; `GetPlaybackSpeed` was added (the tool must read the
+persisted speed back); the detached player handle is per Player-screen
+(released on pop — the SDK service idle-stops when paused + no handle), with
+the consequence that the Auto-Play-off embedded-chapter boundary pause runs
+only while the Player screen is open. LP3 media integration (volume rocker,
+now-playing) is validated by the user on-device.
+
+## Background / where things stand
+
+- `light-sdk` rebased onto upstream main (2026-08-17): 13 upstream commits
+  incl. **#148 detached audio** (merged), #146 stale-UI fix, #147 keyboard
+  v0.0.18, #158 NFC, #162 allowlist. 12 local patches + 9-file WIP intact.
+  `tools/sdk-update` exists for future pulls; `tools/build --dir audiobooks
+  :app:assembleDebug :server:assembleDebug` is green on the rebased SDK.
+- **Root cause of missing LP3 media integration** (volume rocker, now-playing
+  card, media controls): playback lives in the companion
+  (`com.lightphone.audiobooks.server`); LightOS keys media integration on the
+  **tool**. Confirmed on LP3 2026-08-17: no volume modal appears while
+  audiobooks plays, whereas the radio tool (in-tool playback) responds to the
+  rocker. Verified in code: `LightAudioUsage.Speech` vs `Music` is **not** the
+  cause (both map to `USAGE_MEDIA`).
+- Direction: move playback into the tool via **#148 detached audio**
+  (`newPlayer(playback = Detached)` → SDK-owned `LightMediaService` in the
+  tool's process). This is Light's own tool-audio design; the companion's media
+  methods (`PlayBook`/`GetBooks`/…) are our local additive patches, not
+  upstream. Companion remains for what tools can't do: `/sdcard/Audiobooks`
+  scanning and file serving.
+
+## Phase 0 — finish the reopen-to-playing-book fix (in flight)
+
+- `LibraryScreen.kt` `openPlayingBookIfAny` now retries `playbackState()` up to
+  3× with 1 s delays (cold-start binder race — the same race `refresh()`
+  already defends against). A rebuild was running when this plan was written.
+- Verify on emulator: play a long book → `am force-stop` the **tool only**
+  (companion keeps playing) → relaunch → must land on the Player. Install on
+  LP3 afterwards (tool APK only; server unchanged).
+
+## Phase 1 — the refactor
+
+Target: tool owns playback (detached); companion = scan + store + file server.
+
+1. `app/lighttool.toml`: add `capabilities = ["detached-audio"]`.
+2. **Companion ContentProvider** — serve `/sdcard/Audiobooks` files as
+   `content://` URIs so the tool's player can play them without storage
+   access (tool plugin bans `contentResolver`/storage perms in tools).
+3. **`SaveProgress` binder method** (additive local patch, the established
+   pattern): the companion currently writes progress only because it owns
+   playback; with playback tool-side the tool must report positions
+   (`AudiobookProgressStore` stays in the companion — the library rows need
+   it). Touch `sdk:shared` `LightServiceMethod`, `LightSdkService` resolver,
+   and `MediaClient`.
+4. **Tool player** — `PlayerViewModel` replaces MediaClient transport calls
+   with a local detached player:
+   - `DefaultLightAudio(sealedActivity).newPlayer(playback = Detached)`;
+     `awaitReady()` before deciding fresh vs live session; reuse a non-empty
+     queue (don't clobber live playback).
+   - Map book parts → `LightAudioItem(LightAudioSource.UrlSource(contentUri))`.
+   - UI observes local player state (`positionMs`, `isPlaying`, `speed`,
+     `error`) instead of polling `playbackState()`.
+   - On pause/close: `SaveProgress`.
+   - Speed: set `player.speed` locally; persist via existing `setSpeed` binder
+     (`PlaybackSettingsStore`).
+   - `onCleared()`: `release()` (disconnects, playback continues). Call
+     `stop()` before `release()` to end playback.
+5. **Delete dead companion code**: `LocalPlaybackController`,
+   `PlaybackMediaSession`, `MediaButtonReceiver`, `PlaybackForegroundService`
+   + their manifest entries (foreground-service perms may stay for the SDK
+   server, or go if unused).
+6. Keep binder surface: `getBooks`/`scanLibrary`/`deleteBook`/`open`(with
+   positionMs)/`saveProgress`/`setSpeed`/`setAutoPlayNext`.
+
+## Phase 2 — verification
+
+- Emulator: play → exit tool → screen off → keeps playing; reopen → Player;
+  notification/lockscreen controls present.
+- LP3 (user drives): volume rocker works; standby card; reopen-to-player;
+  background survival after exit.
+
+## Phase 3 — cleanup / docs
+
+- Delete dead code confirmed unused; run `tools/check-agents-size`.
+- Update `audiobooks/AGENTS.md` "Current Architecture" (two-module role
+  change: companion = scan/store/serve, tool = UI + detached playback),
+  `WORKLOG.md` session entry, `LIGHT-SDK-PATCHES.md` for the `SaveProgress`
+  patch. Run the `lightos-design` skill over touched screens.
+
+## Gotchas (from the 2026-08-17 session)
+
+- `tools/build` aborts if < 4 GB free; leftover Gradle/Kotlin daemons eat RAM —
+  kill with `pkill -f GradleDaemon` / `pkill -f kotlin-build-tools`, then
+  retry. Never run two builds concurrently.
+- Detached player: **one handle per process**; `release()` does not stop
+  playback; reconnecting awaits readiness and reuses the live queue;
+  `LightAudioService` must stay in the tool's default process
+  (`assertSharedProcess` — never add `android:process`).
+- The audio-demo (`examples/audio-demo`) is the reference implementation for
+  the detached API.
+- When LightOS eventually ships the media methods, `serverPackage` →
+  `com.lightos` and the companion can be dropped; the provider design stays
+  valid until then.

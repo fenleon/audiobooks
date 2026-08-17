@@ -17,7 +17,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
+import com.lightphone.audiobooks.AppLightViewModel
 import com.lightphone.audiobooks.MediaClient
+import com.lightphone.audiobooks.VolumePanelOverlay
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
@@ -36,7 +38,7 @@ import com.thelightphone.sdk.ui.lightClickable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 
-class SettingsViewModel : LightViewModel<Unit>() {
+class SettingsViewModel : AppLightViewModel<Unit>() {
 
     val autoPlayNext = MutableStateFlow(true)
     private var loaded = false
@@ -71,22 +73,24 @@ class SettingsScreen(sealedActivity: SealedLightActivity) :
     override fun Content() {
         val autoPlayNext by viewModel.autoPlayNext.collectAsState()
         val themeColors by LightThemeController.colors.collectAsState()
+        val volumePanel by viewModel.volumePanel.collectAsState()
 
         LightTheme(colors = themeColors) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(LightThemeTokens.colors.background),
-            ) {
-                LightTopBar(
-                    leftButton = LightBarButton.LightIcon(
-                        icon = LightIcons.BACK,
-                        onClick = { goBack() },
-                        contentDescription = "Back to Library",
-                    ),
-                    center = LightTopBarCenter.Text("Settings"),
-                )
-                Column(modifier = Modifier.weight(1f)) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(LightThemeTokens.colors.background),
+                ) {
+                    LightTopBar(
+                        leftButton = LightBarButton.LightIcon(
+                            icon = LightIcons.BACK,
+                            onClick = { goBack() },
+                            contentDescription = "Back to Library",
+                        ),
+                        center = LightTopBarCenter.Text("Settings"),
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -136,8 +140,15 @@ class SettingsScreen(sealedActivity: SealedLightActivity) :
                             .padding(horizontal = 24.dp, vertical = 14.dp),
                     )
                 }
+                // Full-screen overlay on top of everything (the panel is a
+                // visual replica — not interactive).
+                VolumePanelOverlay(
+                    state = volumePanel,
+                    onDismiss = { viewModel.dismissVolumePanel() },
+                )
             }
         }
+    }
     }
 
     private fun openScanProgress() {

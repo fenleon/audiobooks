@@ -1,16 +1,32 @@
 package com.lightphone.audiobooks
 
+import android.net.Uri
 import com.thelightphone.sdk.callRemoteServiceMethod
 import com.thelightphone.sdk.shared.LightResult
 import com.thelightphone.sdk.shared.LightServiceMethod
 import com.thelightphone.sdk.shared.getOrNull
 
 /**
- * Thin RPC client for the Audiobooks media methods. Everything privileged
- * (scan, playback, media session) lives in the companion (:server); the tool
- * only renders state fetched over the SDK binder.
+ * Thin RPC client for the Audiobooks media methods. The companion (:server)
+ * hosts the scan, the progress store, and the media file provider; playback
+ * runs in the tool itself (SDK detached audio), so the transport surface is
+ * the library + settings + progress reporting.
  */
 object MediaClient {
+
+    /** The companion's media provider authority — the tool's player reads the
+     *  library files through it (the tool has no storage access). */
+    private const val AUDIOBOOK_MEDIA_AUTHORITY = "content://com.lightphone.audiobooks.server.media"
+
+    /**
+     * Maps a MediaStore URI (as served in `GetBooks`) to the companion
+     * provider's equivalent, which the tool's process can open.
+     */
+    fun proxyUri(playbackReference: String): String {
+        val mediaId = Uri.parse(playbackReference).lastPathSegment?.takeIf { it.isNotBlank() }
+            ?: return playbackReference
+        return "$AUDIOBOOK_MEDIA_AUTHORITY/media/$mediaId"
+    }
 
     suspend fun getBooks(): List<LightServiceMethod.GetBooks.Book> =
         callRemoteServiceMethod(LightServiceMethod.GetBooks, Unit)
@@ -29,33 +45,6 @@ object MediaClient {
             LightServiceMethod.DeleteBook.Request(bookId),
         ).getOrNull()
 
-    suspend fun play(
-        bookId: String,
-        partIndex: Int = 0,
-        positionMs: Long = 0,
-    ): Boolean = callRemoteServiceMethod(
-        LightServiceMethod.PlayBook,
-        LightServiceMethod.PlayBook.Request(bookId, partIndex, positionMs),
-    ) is LightResult.Success
-
-    /** Loads a book paused at its saved position; playback starts only on an explicit play. */
-    suspend fun open(
-        bookId: String,
-        partIndex: Int = 0,
-        positionMs: Long = 0,
-    ): Boolean = callRemoteServiceMethod(
-        LightServiceMethod.OpenBook,
-        LightServiceMethod.OpenBook.Request(bookId, partIndex, positionMs),
-    ) is LightResult.Success
-
-    /** Jumps to a chapter on the loaded book, preserving the play/pause state. */
-    suspend fun seekToPart(partIndex: Int) {
-        callRemoteServiceMethod(
-            LightServiceMethod.SeekToPart,
-            LightServiceMethod.SeekToPart.Request(partIndex),
-        )
-    }
-
     suspend fun autoPlayNext(): Boolean? =
         callRemoteServiceMethod(LightServiceMethod.GetAutoPlayNext, Unit)
             .getOrNull()?.enabled
@@ -67,16 +56,9 @@ object MediaClient {
         )
     }
 
-    suspend fun pause() {
-        callRemoteServiceMethod(LightServiceMethod.PausePlayback, Unit)
-    }
-
-    suspend fun seekTo(positionMs: Long) {
-        callRemoteServiceMethod(
-            LightServiceMethod.SeekTo,
-            LightServiceMethod.SeekTo.Request(positionMs),
-        )
-    }
+    suspend fun playbackSpeed(): Float? =
+        callRemoteServiceMethod(LightServiceMethod.GetPlaybackSpeed, Unit)
+            .getOrNull()?.speed
 
     suspend fun setSpeed(speed: Float) {
         callRemoteServiceMethod(
@@ -85,6 +67,20 @@ object MediaClient {
         )
     }
 
-    suspend fun playbackState(): LightServiceMethod.GetPlaybackState.Response? =
-        callRemoteServiceMethod(LightServiceMethod.GetPlaybackState, Unit).getOrNull()
+    /** The current media-stream volume (level of max) — the volume panel's read. */
+    suspend fun volumeLevel(): LightServiceMethod.GetVolumeLevel.Response? =
+        callRemoteServiceMethod(LightServiceMethod.GetVolumeLevel, Unit).getOrNull()
+
+    /** Reports a listening position so the companion can persist it. */
+    suspend fun saveProgress(
+        bookId: String,
+        positionMs: Long,
+        durationMs: Long,
+        speed: Float,
+    ) {
+        callRemoteServiceMethod(
+            LightServiceMethod.SaveProgress,
+            LightServiceMethod.SaveProgress.Request(bookId, positionMs, durationMs, speed),
+        )
+    }
 }

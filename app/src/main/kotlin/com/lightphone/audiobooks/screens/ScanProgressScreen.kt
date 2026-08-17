@@ -2,6 +2,7 @@ package com.lightphone.audiobooks.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -14,9 +15,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
+import com.lightphone.audiobooks.AppLightViewModel
 import com.lightphone.audiobooks.MediaClient
+import com.lightphone.audiobooks.VolumePanelOverlay
 import com.thelightphone.sdk.LightScreen
-import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
@@ -30,7 +32,7 @@ import com.thelightphone.sdk.ui.LightThemeTokens
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 
-class ScanProgressViewModel : LightViewModel<Unit>() {
+class ScanProgressViewModel : AppLightViewModel<Unit>() {
 
     val done = MutableStateFlow(false)
     private var started = false
@@ -64,20 +66,22 @@ class ScanProgressScreen(sealedActivity: SealedLightActivity) :
     override fun Content() {
         val done by viewModel.done.collectAsState()
         val themeColors by LightThemeController.colors.collectAsState()
+        val volumePanel by viewModel.volumePanel.collectAsState()
 
         LightTheme(colors = themeColors) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(LightThemeTokens.colors.background),
-            ) {
+            Box(modifier = Modifier.fillMaxSize()) {
                 Column(
                     modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .padding(horizontal = 24.dp),
-                    verticalArrangement = Arrangement.Center,
+                        .fillMaxSize()
+                        .background(LightThemeTokens.colors.background),
                 ) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .padding(horizontal = 24.dp),
+                        verticalArrangement = Arrangement.Center,
+                    ) {
                     LightText(
                         text = "Scanning Library",
                         variant = LightTextVariant.Heading,
@@ -111,6 +115,13 @@ class ScanProgressScreen(sealedActivity: SealedLightActivity) :
                         ),
                         null,
                     ),
+                )
+                }
+                // Full-screen overlay on top of everything (the panel is a
+                // visual replica — not interactive).
+                VolumePanelOverlay(
+                    state = volumePanel,
+                    onDismiss = { viewModel.dismissVolumePanel() },
                 )
             }
         }

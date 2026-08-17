@@ -1,11 +1,12 @@
 [tool]
 id = "com.lightphone.audiobooks"
 label = "Audiobooks"
-versionCode = 18
-versionName = "0.5.7"
+versionCode = 19
+versionName = "0.6.0"
 permissions = []
-# The tool is a thin UI; the companion (:server) hosts the SDK service, the
-# /sdcard/Audiobooks scan, and playback. Point at com.lightos on a real LP3
-# once Light ships the media methods there.
+capabilities = ["detached-audio"]
+# The tool owns playback (SDK detached audio) and the UI; the companion (:server)
+# hosts the SDK service, the /sdcard/Audiobooks scan, and the file provider.
+# Point at com.lightos on a real LP3 once Light ships the media methods there.
 serverPackage = "com.lightphone.audiobooks.server"
 orientation = "portrait"

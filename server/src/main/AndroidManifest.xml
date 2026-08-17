@@ -6,9 +6,6 @@
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
     <!-- sdk:ui merges CAMERA for its QR scanner; the companion is a media server. -->
     <uses-permission
@@ -39,19 +36,21 @@
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
             android:configChanges="orientation|screenSize|keyboardHidden" />
 
-        <service
-            android:name=".PlaybackForegroundService"
-            android:exported="false"
-            android:foregroundServiceType="mediaPlayback"
-            android:stopWithTask="false" />
+        <!-- Transparent bridge to the system Bluetooth settings; started by
+             the tool's Library bar (Bluetooth link). -->
+        <activity
+            android:name=".BluetoothSettingsActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
-        <receiver
-            android:name=".MediaButtonReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MEDIA_BUTTON" />
-            </intent-filter>
-        </receiver>
+        <!-- Serves the library files to the tool's detached player (the tool
+             has no storage access). Exported so the tool's process can read
+             the URIs — see AudiobookMediaProvider. -->
+        <provider
+            android:name=".AudiobookMediaProvider"
+            android:authorities="com.lightphone.audiobooks.server.media"
+            android:exported="true" />
 
         <!-- sdk:client merges its UnifiedPush service + file-share provider;
              the companion is a local media server and uses neither. -->

@@ -30,8 +30,9 @@ import kotlinx.coroutines.launch
 
 /**
  * Minimal status screen for the companion. Its real job is the SDK service +
- * playback; this activity exists to request the audio permission and to give
- * the user a place to trigger a rescan.
+ * the library scan (playback runs in the tool's process); this activity exists
+ * to request the audio permission and to give the user a place to trigger a
+ * rescan.
  */
 class MainActivity : ComponentActivity() {
 
@@ -57,9 +58,6 @@ class MainActivity : ComponentActivity() {
                 Manifest.permission.READ_EXTERNAL_STORAGE
             },
         )
-        if (Build.VERSION.SDK_INT >= 33) {
-            permissions += Manifest.permission.POST_NOTIFICATIONS
-        }
         if (permissions.any { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }) {
             permissionLauncher.launch(permissions.toTypedArray())
         }

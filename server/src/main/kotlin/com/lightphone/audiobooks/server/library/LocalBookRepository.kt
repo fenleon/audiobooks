@@ -248,14 +248,22 @@ object LocalBookRepository {
             }
         }
         folderParts.forEach { (folderPath, candidatesByPath) ->
-            // Part order: disc/track tags when present (absent sorts
-            // last), then natural filename order ("ch2" < "ch10").
+            // Part order: disc/track tags when present **uniformly** (Librivox-
+            // style sets tag only some files — e.g. ch09 + ch13 tagged, the
+            // rest not — and "tagged first, untagged last" would split the
+            // book). With mixed/absent tags, fall back to natural filename
+            // order ("ch2" < "ch10"), which matches how these sets are named.
+            val taggedUniformly = candidatesByPath.values.all {
+                it.embedded.trackNumber > 0 && it.embedded.discNumber > 0
+            }
             val ordered = candidatesByPath.values.sortedWith(
-                compareBy<LocalPartCandidate> {
-                    it.embedded.discNumber.takeIf { n -> n > 0 } ?: Int.MAX_VALUE
-                }.thenBy {
-                    it.embedded.trackNumber.takeIf { n -> n > 0 } ?: Int.MAX_VALUE
-                }.thenComparator { a, b -> naturalOrder(a.displayName, b.displayName) },
+                if (taggedUniformly) {
+                    compareBy<LocalPartCandidate> { it.embedded.discNumber }
+                        .thenBy { it.embedded.trackNumber }
+                } else {
+                    compareBy<LocalPartCandidate> { it.displayName.lowercase() }
+                        .thenComparator { a, b -> naturalOrder(a.displayName, b.displayName) }
+                },
             )
             val stableId = "folder:${folderPath.normalizedFolderHash()}"
             val stored = AudiobookProgressStore.read(AudiobookSource.Local, stableId)

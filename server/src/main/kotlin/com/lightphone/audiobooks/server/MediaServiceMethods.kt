@@ -2,6 +2,7 @@ package com.lightphone.audiobooks.server
 
 import android.content.ComponentName
 import android.content.Context
+import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
@@ -74,6 +75,39 @@ object MediaServiceMethods {
                     max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC),
                 )
                 LightResult.Success(LightServiceMethod.GetVolumeLevel.encodeResponse(response))
+            }
+
+            LightServiceMethod.GetBluetoothConnected.id -> {
+                val audio = LocalBookRepository.applicationContext
+                    .getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                // Without BLUETOOTH_CONNECT (API 31+) BT devices are filtered
+                // out of getDevices, so this reads false until the permission
+                // is granted (adb pm grant, like passes' CAMERA).
+                val connected = runCatching {
+                    audio.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any { device ->
+                        device.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                            device.type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
+                            device.type == AudioDeviceInfo.TYPE_BLE_SPEAKER ||
+                            device.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+                    }
+                }.getOrDefault(false)
+                val response = LightServiceMethod.GetBluetoothConnected.Response(connected)
+                LightResult.Success(LightServiceMethod.GetBluetoothConnected.encodeResponse(response))
+            }
+
+            LightServiceMethod.WaitForVolumeChange.id -> {
+                val request = LightServiceMethod.WaitForVolumeChange.decodeRequest(payload!!)
+                VolumeChangeMonitor.ensureRegistered(LocalBookRepository.applicationContext)
+                // Blocks a binder thread up to the timeout — the SDK's service
+                // has a thread pool, and one long-poll at a time is the point.
+                val (level, max) = runBlocking {
+                    VolumeChangeMonitor.awaitChange(
+                        LightServiceMethod.WaitForVolumeChange.WAIT_TIMEOUT_MS,
+                        request.knownLevel,
+                    )
+                }
+                val response = LightServiceMethod.WaitForVolumeChange.Response(level, max)
+                LightResult.Success(LightServiceMethod.WaitForVolumeChange.encodeResponse(response))
             }
 
             LightServiceMethod.SaveProgress.id -> {

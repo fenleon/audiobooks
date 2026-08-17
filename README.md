@@ -47,8 +47,8 @@ Audiobooks plays audiobooks stored on your device, without a cloud account or su
 
 ### Supported Formats
 
-- MP3
-- M4B
+- MP3, M4B
+- M4A, AAC, OGG, OGA, OPUS, FLAC, WAV (all natively decoded by the platform — nothing bundled)
 
 ### Features
 
@@ -57,12 +57,13 @@ Audiobooks plays audiobooks stored on your device, without a cloud account or su
 - Chapter list with per-chapter seek — folder books use their files, single-file books use their embedded chapters (MP3 chapter tags, M4B bookmarks)
 - Chapter-scoped time and progress in the player; whole-book percent in the library
 - Playback speed (0.5x–2x), with an optional Auto-Play "next chapter" toggle
+- Rewind on resume: after a long pause (>5 min), playback jumps back 15 s so you re-orient (baked in — no toggle)
 - Persistent listening progress across the entire book
 - Resume playback
 - Recent-first library ordering
 - Background playback with a media notification and lockscreen/system media controls
 
-Audiobooks scans the shared `Audiobooks` folder at any depth. Individual .mp3 and .m4b files directly inside `Audiobooks/` are treated as standalone books. Every folder inside `Audiobooks/` is treated as a single audiobook, with all supported audio files inside it played continuously in alphabetical order. Audiobooks never copies books into app-private storage.
+Audiobooks scans the shared `Audiobooks` folder at any depth. Individual audio files (any supported format) directly inside `Audiobooks/` are treated as standalone books. Every folder inside `Audiobooks/` is treated as a single audiobook, with all supported audio files inside it played continuously in natural order. Audiobooks never copies books into app-private storage.
 
 ---
 
@@ -73,7 +74,7 @@ Audiobooks scans the shared `Audiobooks` folder at any depth. Individual .mp3 an
 1. Connect your Light Phone III to your computer.
 2. Create an `Audiobooks` folder in shared device storage if it does not already exist.
 3. Either:
-  - copy a single .mp3 or .m4b directly into the Audiobooks folder, or
+  - copy a single audio file (MP3, M4B, M4A, AAC, OGG, OGA, OPUS, FLAC, WAV) directly into the Audiobooks folder, or
   - create one folder per audiobook and place its audio files inside.
 
 Files are played in alphabetical order, so numbering them (01, 02, 03, …) is recommended.

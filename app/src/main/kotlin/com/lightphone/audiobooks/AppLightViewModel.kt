@@ -5,7 +5,9 @@ import androidx.lifecycle.viewModelScope
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.shared.LightServiceMethod
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /** The tool's last-known media volume — seeded from the server and updated on
@@ -42,6 +44,11 @@ abstract class AppLightViewModel<T> : LightViewModel<T>() {
     /** The volume panel's state (null = hidden). Hosted by every screen's root. */
     val volumePanel = MutableStateFlow<VolumePanelState?>(null)
 
+    /** Whether a Bluetooth audio device is connected — the Library's icon. */
+    val bluetoothConnected = MutableStateFlow(false)
+
+    private var volumeWatcherJob: Job? = null
+
     fun dismissVolumePanel() {
         volumePanel.value = null
     }
@@ -49,17 +56,56 @@ abstract class AppLightViewModel<T> : LightViewModel<T>() {
     override fun onScreenShow(screen: SimpleLightScreen<T>) {
         super.onScreenShow(screen)
         // Keep the volume cache fresh (cheap; lets the panel bar move without
-        // a round-trip on the next press).
+        // a round-trip on the next press) and load the BT icon state right
+        // away (the watcher below only refreshes it on its own cadence).
         refreshVolumeLevel()
+        refreshBluetoothConnected()
+        startVolumeWatcher()
         if (handlesReopenItself) return
         viewModelScope.launch {
             if (settleReopenToPlayer(screen)) return@launch
         }
     }
 
+    override fun onScreenHide(screen: SimpleLightScreen<T>) {
+        super.onScreenHide(screen)
+        stopVolumeWatcher()
+    }
+
     override fun onAppPause() {
+        stopVolumeWatcher()
         if (PlayerSession.isPlaying) PlayerSession.reopenPending = true
         super.onAppPause()
+    }
+
+    /** While this screen is showing, wait for external media-volume changes (a
+     *  connected BT device's own volume buttons — AVRCP) and surface them in
+     *  the panel immediately via the companion's long-poll, and keep the BT
+     *  icon fresh. Stops on hide/pause, so it costs nothing in the background.
+     *  A request is outstanding at most one at a time (the server blocks it
+     *  until the volume changes or its ~2 s timeout). */
+    private fun startVolumeWatcher() {
+        if (volumeWatcherJob?.isActive == true) return
+        volumeWatcherJob = viewModelScope.launch {
+            while (isActive) {
+                // A null cache (cold start) uses -1 so the first request
+                // returns the current level immediately and just seeds it.
+                val known = MediaVolumeState.level ?: -1
+                val response = MediaClient.waitForVolumeChange(known) ?: continue
+                if (MediaVolumeState.level != null && response.level != MediaVolumeState.level) {
+                    volumePanel.value = VolumePanelState.Media(response.level, response.max)
+                }
+                MediaVolumeState.level = response.level
+                MediaVolumeState.max = response.max
+                val bluetoothConnectedNow = MediaClient.bluetoothConnected()
+                if (bluetoothConnectedNow != null) bluetoothConnected.value = bluetoothConnectedNow
+            }
+        }
+    }
+
+    private fun stopVolumeWatcher() {
+        volumeWatcherJob?.cancel()
+        volumeWatcherJob = null
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
@@ -102,6 +148,12 @@ abstract class AppLightViewModel<T> : LightViewModel<T>() {
                 MediaVolumeState.level = level.level
                 MediaVolumeState.max = level.max
             }
+        }
+    }
+
+    private fun refreshBluetoothConnected() {
+        viewModelScope.launch {
+            MediaClient.bluetoothConnected()?.let { bluetoothConnected.value = it }
         }
     }
 }

@@ -194,8 +194,7 @@ object LocalBookRepository {
         val candidatePaths = directCandidates.mapTo(HashSet()) { it.absolutePath }
         if (cache.keys.removeAll { it !in candidatePaths }) cacheDirty = true
 
-        var mp3Count = 0
-        var m4bCount = 0
+        val formatCounts = linkedMapOf<String, Int>()
         val accepted = linkedMapOf<String, Audiobook>()
         val folderParts = linkedMapOf<String, LinkedHashMap<String, LocalPartCandidate>>()
         val seenUris = HashSet<String>()
@@ -206,8 +205,10 @@ object LocalBookRepository {
             val displayName = file.name
             val size = file.length().coerceAtLeast(0)
             val cached = metadataFor(file, uri)
-            val isM4b = displayName.endsWith(".m4b", ignoreCase = true)
-            if (isM4b) m4bCount++ else mp3Count++
+            val isMp4Container = displayName.endsWith(".m4b", ignoreCase = true) ||
+                displayName.endsWith(".m4a", ignoreCase = true)
+            val ext = displayName.substringAfterLast('.', "").lowercase()
+            formatCounts[ext] = (formatCounts[ext] ?: 0) + 1
             val folderPath = folderPathOf(path, rootDirectory)
             val mediaId = ContentUris.parseId(uri)
             val stableId = "external:$mediaId"
@@ -222,7 +223,7 @@ object LocalBookRepository {
                 val chapters = if (cached.chaptersParsed) {
                     cached.chapters
                 } else {
-                    readEmbeddedChapters(uri, isM4b, duration).also {
+                    readEmbeddedChapters(uri, isMp4Container, duration).also {
                         cache[path] = cached.copy(chapters = it, chaptersParsed = true)
                         cacheDirty = true
                     }
@@ -313,8 +314,7 @@ object LocalBookRepository {
         Log.d(TAG, "audiobooks folder found=$folderExists")
         Log.d(TAG, "candidate count=${directCandidates.size}")
         Log.d(TAG, "local book count=${books.size} (metadata cache hits=$cacheHits, misses=$cacheMisses)")
-        Log.d(TAG, "mp3 count=$mp3Count")
-        Log.d(TAG, "m4b count=$m4bCount")
+        Log.d(TAG, "format counts=$formatCounts")
         when {
             books.isNotEmpty() -> LocalScanResult.Success(books)
             !folderExists -> LocalScanResult.FolderMissing
@@ -380,8 +380,7 @@ object LocalBookRepository {
             MediaScannerConnection.scanFile(
                 appContext,
                 files.map { it.absolutePath }.toTypedArray(),
-                files.map { if (it.name.endsWith(".m4b", true)) "audio/mp4" else "audio/mpeg" }
-                    .toTypedArray(),
+                files.map { mimeTypeFor(it.name) }.toTypedArray(),
             ) { path, uri ->
                 if (uri != null) indexed[path] = uri
                 if (remaining.decrementAndGet() == 0 && continuation.isActive) {
@@ -427,11 +426,11 @@ object LocalBookRepository {
         ),
     )
 
-    /** Parses embedded chapters (MP3 CHAP / M4B bookmarks) for a single-file book. */
-    private fun readEmbeddedChapters(uri: Uri, isM4b: Boolean, durationMs: Long): List<EmbeddedChapter> =
+    /** Parses embedded chapters (MP3 CHAP / MP4 bookmarks) for a single-file book. */
+    private fun readEmbeddedChapters(uri: Uri, isMp4Container: Boolean, durationMs: Long): List<EmbeddedChapter> =
         runCatching {
             appContext.contentResolver.openInputStream(uri)?.use { input ->
-                if (isM4b) {
+                if (isMp4Container) {
                     Mp4ChapterParser.parse(input, durationMs)
                 } else {
                     Id3v2ChapterParser.parse(input, durationMs)
@@ -461,14 +460,29 @@ object LocalBookRepository {
         }
     }
 
-    private fun String.removeSupportedSuffix(): String = when {
-        endsWith(".mp3", ignoreCase = true) -> dropLast(4)
-        endsWith(".m4b", ignoreCase = true) -> dropLast(4)
-        else -> this
+    /** Audio extensions the library accepts (all natively decoded by the platform on API 34). */
+    private val SUPPORTED_EXTENSIONS = listOf(
+        ".mp3", ".m4b", ".m4a", ".aac", ".ogg", ".oga", ".opus", ".flac", ".wav",
+    )
+
+    private fun String.removeSupportedSuffix(): String {
+        val suffix = SUPPORTED_EXTENSIONS.firstOrNull { endsWith(it, ignoreCase = true) } ?: return this
+        return dropLast(suffix.length)
     }
 
     private fun String.hasSupportedExtension(): Boolean =
-        endsWith(".mp3", ignoreCase = true) || endsWith(".m4b", ignoreCase = true)
+        SUPPORTED_EXTENSIONS.any { endsWith(it, ignoreCase = true) }
+
+    /** MIME the media scanner should record for a file (sniffing would also work, this keeps rows exact). */
+    private fun mimeTypeFor(name: String): String = when {
+        name.endsWith(".m4b", true) || name.endsWith(".m4a", true) -> "audio/mp4"
+        name.endsWith(".aac", true) -> "audio/aac"
+        name.endsWith(".ogg", true) || name.endsWith(".oga", true) -> "audio/ogg"
+        name.endsWith(".opus", true) -> "audio/opus"
+        name.endsWith(".flac", true) -> "audio/flac"
+        name.endsWith(".wav", true) -> "audio/wav"
+        else -> "audio/mpeg"
+    }
 
     /**
      * Resolves the folder a file belongs to, relative to Audiobooks/ (e.g. "MyTestBook" or

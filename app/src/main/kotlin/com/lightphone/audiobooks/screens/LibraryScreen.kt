@@ -86,6 +86,7 @@ class LibraryScreen(sealedActivity: SealedLightActivity) :
         val loading by viewModel.loading.collectAsState()
         val themeColors by LightThemeController.colors.collectAsState()
         val volumePanel by viewModel.volumePanel.collectAsState()
+        val bluetoothConnected by viewModel.bluetoothConnected.collectAsState()
 
         LightTheme(colors = themeColors) {
             Box(modifier = Modifier.fillMaxSize()) {
@@ -120,9 +121,19 @@ class LibraryScreen(sealedActivity: SealedLightActivity) :
                             ),
                             null,
                             LightBarButton.LightIcon(
-                                icon = LightIcons.BLUETOOTH,
+                                // Connected state adds the underline variant
+                                // (same convention as the downloaded-arrow icon).
+                                icon = if (bluetoothConnected) {
+                                    LightIcons.BLUETOOTH_CONNECTED
+                                } else {
+                                    LightIcons.BLUETOOTH
+                                },
                                 onClick = { openBluetoothSettings() },
-                                contentDescription = "Bluetooth settings",
+                                contentDescription = if (bluetoothConnected) {
+                                    "Bluetooth connected"
+                                } else {
+                                    "Bluetooth settings"
+                                },
                             ),
                         ),
                     )

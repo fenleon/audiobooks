@@ -67,6 +67,22 @@ object MediaClient {
         )
     }
 
+    /** Whether a Bluetooth audio device is connected (Library's connected-BT icon). */
+    suspend fun bluetoothConnected(): Boolean? =
+        callRemoteServiceMethod(LightServiceMethod.GetBluetoothConnected, Unit)
+            .getOrNull()?.connected
+
+    /**
+     * Long-polls until the media-stream volume changes (or the server's
+     * timeout) — the volume panel's instant read for a BT device's own volume
+     * buttons, with no polling cadence.
+     */
+    suspend fun waitForVolumeChange(knownLevel: Int): LightServiceMethod.WaitForVolumeChange.Response? =
+        callRemoteServiceMethod(
+            LightServiceMethod.WaitForVolumeChange,
+            LightServiceMethod.WaitForVolumeChange.Request(knownLevel),
+        ).getOrNull()
+
     /** The current media-stream volume (level of max) — the volume panel's read. */
     suspend fun volumeLevel(): LightServiceMethod.GetVolumeLevel.Response? =
         callRemoteServiceMethod(LightServiceMethod.GetVolumeLevel, Unit).getOrNull()

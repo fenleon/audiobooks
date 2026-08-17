@@ -109,6 +109,8 @@ class PlayerViewModel(
     private var observing = false
     private var autoPlayNext = true
     private var lastSavedAt = 0L
+    /** Wall-clock time of the last pause observed by this VM (0 = none). */
+    private var lastPausedAt = 0L
     private var lastPartIndex = -1
     private var lastChapterPartIndex = -1
     private var lastChapterIndex = -1
@@ -165,7 +167,10 @@ class PlayerViewModel(
             p.isPlaying.collect { playing ->
                 _ui.update { it.copy(playing = playing) }
                 PlayerSession.isPlaying = playing
-                if (!playing && _ui.value.live) saveProgress()
+                if (!playing && _ui.value.live) {
+                    lastPausedAt = System.currentTimeMillis()
+                    saveProgress()
+                }
             }
         }
         viewModelScope.launch {
@@ -291,6 +296,7 @@ class PlayerViewModel(
                 p.pause()
             } else if (_ui.value.live) {
                 maybeRestartEnded(p)
+                maybeRewindAfterPause(p)
                 p.play()
             } else {
                 // In preview the play button means "play this book" even if
@@ -394,6 +400,14 @@ class PlayerViewModel(
         }
     }
 
+    /** A resume after a long pause jumps back a few seconds so the listener
+     *  re-orients before the story continues (baked in, no toggle). */
+    private fun maybeRewindAfterPause(p: LightAudioPlayer) {
+        if (lastPausedAt == 0L) return
+        if (System.currentTimeMillis() - lastPausedAt < REWIND_GAP_MS) return
+        seekToGlobal(p, _ui.value.positionMs - REWIND_MS)
+    }
+
     private fun saveProgress() {
         if (!_ui.value.live) return
         lastSavedAt = System.currentTimeMillis()
@@ -445,6 +459,9 @@ class PlayerViewModel(
     private companion object {
         const val SAVE_INTERVAL_MS = 7_000L
         const val END_EPSILON_MS = 1_500L
+        /** Rewind-on-resume: pause gap threshold and the jump back. */
+        const val REWIND_GAP_MS = 5 * 60 * 1000L
+        const val REWIND_MS = 15_000L
     }
 }
 

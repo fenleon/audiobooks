@@ -22,8 +22,8 @@ android {
         applicationId = "com.lightphone.audiobooks.server"
         minSdk = 34
         targetSdk = 36
-        versionCode = 8
-        versionName = "0.5.7"
+        versionCode = 9
+        versionName = "0.5.8"
     }
 
     buildTypes {

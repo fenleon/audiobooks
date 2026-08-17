@@ -1,8 +1,8 @@
 [tool]
 id = "com.lightphone.audiobooks"
 label = "Audiobooks"
-versionCode = 19
-versionName = "0.6.0"
+versionCode = 20
+versionName = "0.6.1"
 permissions = []
 capabilities = ["detached-audio"]
 # The tool owns playback (SDK detached audio) and the UI; the companion (:server)

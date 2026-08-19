@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
@@ -11,27 +10,13 @@
          with adb (like passes' CAMERA). -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
-    <!-- sdk:ui merges CAMERA for its QR scanner; the companion is a media server. -->
-    <uses-permission
-        android:name="android.permission.CAMERA"
-        tools:node="remove" />
-
-    <application
-        android:name=".ServerApplication"
-        android:allowBackup="false"
-        android:icon="@android:mipmap/sym_def_app_icon"
-        android:label="Audiobooks Server"
-        android:theme="@android:style/Theme.Black.NoTitleBar"
-        android:hardwareAccelerated="true">
-
-        <activity
-            android:name=".MainActivity"
-            android:exported="true"
-            android:screenOrientation="portrait"
-            android:configChanges="orientation|screenSize|keyboardHidden" />
+    <!-- Merged into the tool APK (single-module build, 2026-08-18). The
+         tool's generated manifest provides the application class, label, and
+         launcher; this library contributes only components. -->
+    <application>
 
         <!-- Hosts the system media-delete consent dialog; started by the tool
-             (the companion can't launch activities from the background). -->
+             (a background service can't launch activities). -->
         <activity
             android:name=".DeleteConsentActivity"
             android:exported="true"
@@ -48,22 +33,31 @@
             android:excludeFromRecents="true"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
-        <!-- Serves the library files to the tool's detached player (the tool
-             has no storage access). Exported so the tool's process can read
-             the URIs — see AudiobookMediaProvider. -->
+        <!-- Requests READ_MEDIA_AUDIO (the scan + media provider need it) and
+             finishes. The old companion asked on its launcher activity; the
+             merged build has no companion activity, so the tool launches this
+             via the SDK's permission flow (LightSdkServer.permissionActivity). -->
+        <activity
+            android:name=".MediaPermissionActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- Serves the library files to the detached player as `content://`
+             URIs (the tool runtime forbids storage access; the provider holds
+             the audio read permission). -->
         <provider
             android:name=".AudiobookMediaProvider"
             android:authorities="com.lightphone.audiobooks.server.media"
             android:exported="true" />
 
-        <!-- sdk:client merges its UnifiedPush service + file-share provider;
-             the companion is a local media server and uses neither. -->
-        <service
-            android:name="com.thelightphone.sdk.LightPushService"
-            tools:node="remove" />
+        <!-- Wires the SDK server settings + scan at app start, before the
+             tool's first binder call (Application.onCreate runs before
+             providers, so the bind in LightSdkApplication is unaffected). -->
         <provider
-            android:name="com.thelightphone.sdk.LightFileProvider"
-            tools:node="remove" />
+            android:name=".ServerBootstrapProvider"
+            android:authorities="com.lightphone.audiobooks.server.bootstrap"
+            android:exported="false" />
     </application>
 
 </manifest>

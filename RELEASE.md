@@ -55,8 +55,9 @@ the emulator during the build if memory is tight.
 
 ## Versioning
 
-`versionCode` / `versionName` are declared in `app/lighttool.toml` for the
-tool; the companion's are in `server/build.gradle.kts` (`defaultConfig`).
+`versionCode` / `versionName` are declared in `app/lighttool.toml` (single-APK
+build since 0.7.0 — the old `server/build.gradle.kts` `defaultConfig` is gone;
+`:server` is now a merged library with no version of its own).
 Bump `versionCode` by 1 for every release so devices accept the upgrade.
 
 ## Verify

@@ -7,15 +7,18 @@ import com.thelightphone.sdk.shared.LightServiceMethod
 import com.thelightphone.sdk.shared.getOrNull
 
 /**
- * Thin RPC client for the Audiobooks media methods. The companion (:server)
- * hosts the scan, the progress store, and the media file provider; playback
- * runs in the tool itself (SDK detached audio), so the transport surface is
- * the library + settings + progress reporting.
+ * Thin RPC client for the Audiobooks media methods. Since the 2026-08-18
+ * single-module merge the methods land on the tool APK's own LightSdkService
+ * (serverPackage = self); the scan, stores, and the media file provider live
+ * in-process via the merged :server library. Playback runs in the tool itself
+ * (SDK detached audio), so the transport surface is the library + settings +
+ * progress reporting.
  */
 object MediaClient {
 
-    /** The companion's media provider authority — the tool's player reads the
-     *  library files through it (the tool has no storage access). */
+    /** The media provider authority — the tool's player reads the library
+     *  files through it (the tool runtime forbids storage access). Since the
+     *  merge the provider lives in the same APK. */
     private const val AUDIOBOOK_MEDIA_AUTHORITY = "content://com.lightphone.audiobooks.server.media"
 
     /**

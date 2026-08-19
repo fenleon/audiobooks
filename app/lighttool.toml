@@ -1,12 +1,16 @@
 [tool]
 id = "com.lightphone.audiobooks"
 label = "Audiobooks"
-versionCode = 20
-versionName = "0.6.1"
+versionCode = 21
+versionName = "0.7.0"
 permissions = []
 capabilities = ["detached-audio"]
-# The tool owns playback (SDK detached audio) and the UI; the companion (:server)
-# hosts the SDK service, the /sdcard/Audiobooks scan, and the file provider.
-# Point at com.lightos on a real LP3 once Light ships the media methods there.
-serverPackage = "com.lightphone.audiobooks.server"
+# Single-module build (2026-08-18): the former :server companion is a library
+# merged into this APK, which hosts its own LightSdkService (the /sdcard/
+# Audiobooks scan, stores, media provider, volume/BT methods) and binds to
+# itself — serverPackage is the tool's own id, so no separate companion APK
+# to install and no dependency on Light shipping the media methods in
+# com.lightos. The tool's screens still call the media methods over the
+# binder; they just land on the same APK's service.
+serverPackage = "com.lightphone.audiobooks"
 orientation = "portrait"

@@ -8,7 +8,7 @@ Instead of treating audiobooks as another streaming platform, Audiobooks treats 
 
 There are no recommendations, storefronts, advertisements, social features, or cover art — just your books.
 
-Built with the Light ethos: **stripped back, calm, and intentionally small**. Books load from the device — a single shared folder, no accounts, no cloud. Audiobooks is a **real LightOS tool**: a thin interface built on the Light SDK design system, with a companion app hosting the on-device library and scanning — playback runs inside the tool on the SDK's detached audio player, so background listening survives the tool closing.
+Built with the Light ethos: **stripped back, calm, and intentionally small**. Books load from the device — a single shared folder, no accounts, no cloud. Audiobooks is a **real LightOS tool**: a thin interface built on the Light SDK design system; the on-device library scan and the SDK server run inside the same APK (single-module build since 0.7.0), and playback runs inside the tool on the SDK's detached audio player, so background listening survives the tool closing.
 
 **Heritage:** Audiobooks began as a fork of [Bard](https://github.com/sjkornelsen/bard) by sjkornelsen, rebuilt around local-only playback.
 
@@ -16,12 +16,12 @@ Audiobooks is currently in **beta**. It is suitable for daily use; features and 
 
 > **Current Status:** Beta
 >
-> **Current Version:** 0.6.1 (versionCode 20)
+> **Current Version:** 0.7.0 (versionCode 21)
 
 > **About the name:** the app is called *Audiobooks* — a plain, descriptive
-> name in the Light Phone tool-naming style. Application IDs:
-> `com.lightphone.audiobooks` (tool) and `com.lightphone.audiobooks.server`
-> (companion).
+> name in the Light Phone tool-naming style. Application ID:
+> `com.lightphone.audiobooks` (a single APK since 0.7.0 — the old companion
+> package `com.lightphone.audiobooks.server` is gone).
 
 ---
 
@@ -93,7 +93,7 @@ Audiobooks is currently designed for the Light Phone III and Android 13 or newer
 Current limitations include:
 
 - Books are removed by deleting their files on the device — there is no in-app delete UI yet.
-- The companion app is required: the production LightOS server (`com.lightos`) does not implement Audiobooks' media methods yet, so the tool needs its companion installed alongside it.
+- Audiobooks ships as a single APK that hosts its own Light SDK server (the media methods it needs are not yet in the production LightOS server `com.lightos`); the app binds to itself, so no companion is installed.
 
 ---
 
@@ -103,19 +103,19 @@ Audiobooks is a native Android application written in Kotlin using Jetpack Compo
 
 Its architecture is intentionally simple, with separate components responsible for local audiobook discovery, playback, progress persistence, and the interface.
 
-The UI is built on the Light SDK's design system (`sdk:ui`) and playback runs on the SDK's detached `LightAudioPlayer` (ExoPlayer). Audiobooks is a standalone Gradle project that consumes the SDK as an included build — see `settings.gradle.kts`. It is a **real LightOS tool**: the `:app` module is built with the SDK's tool plugin (launched from the LightOS toolbox) and owns playback through the SDK's detached audio service — background listening and the media notification live with the tool. The `:server` module is a plain companion app that hosts the SDK service, the library scan, and the media file store — the privileged work the tool plugin forbids in the tool itself.
+The UI is built on the Light SDK's design system (`sdk:ui`) and playback runs on the SDK's detached `LightAudioPlayer` (ExoPlayer). Audiobooks is a standalone Gradle project that consumes the SDK as an included build — see `settings.gradle.kts`. It is a **real LightOS tool**: the `:app` module is built with the SDK's tool plugin (launched from the LightOS toolbox) and owns playback through the SDK's detached audio service — background listening and the media notification live with the tool. The former `:server` companion is merged into the same APK as an Android library: it contributes the SDK server components (the `LightSdkService` the tool binds to, the media file provider, the consent/permission activities) and runs the library scan, the stores, and the volume/BT methods — the privileged work the tool plugin forbids in the tool's own source. The tool binds to itself (`serverPackage = com.lightphone.audiobooks`), so there is exactly one APK to install.
 
 ---
 
-# What the companion adds beyond the current LightOS SDK
+# What the merged server adds beyond the current LightOS SDK
 
-The tool talks to the companion over the SDK's binder using **media methods that are additive to the SDK** — they were added to `sdk:shared`'s `LightServiceMethod` and are implemented by the companion. The production LightOS server (`com.lightos`) does **not** implement these yet; the companion is the reference implementation, and the plan is for Light to ship the same surface so tools can target `com.lightos` directly. The companion provides:
+The tool talks to its own server over the SDK binder using **media methods that are additive to the SDK** — they were added to `sdk:shared`'s `LightServiceMethod` and are implemented inside the merged APK. The production LightOS server (`com.lightos`) does **not** implement these yet; the merged server is the reference implementation, and the plan is for Light to ship the same surface so tools can target `com.lightos` directly. The merged server provides:
 
 - **The media RPC surface** — `GetBooks`, `ScanLibrary`, `DeleteBook`, `GetAutoPlayNext`/`SetAutoPlayNext`, `GetPlaybackSpeed`/`SetPlaybackSpeed`, `GetVolumeLevel`, `GetBluetoothConnected`, `WaitForVolumeChange`, and `SaveProgress`.
 - **Library scanning** — a recursive, incremental scan of `/sdcard/Audiobooks/` (any depth) into single-file and folder books, with titles and chapter names read from embedded metadata (album/title tags) rather than file names.
 - **Media file serving** — a content provider serves the library files to the tool's player.
 - **Chapter metadata** — embedded chapters (MP3 CHAP frames, M4B bookmarks) are parsed into the book model, so single-file books get the same chapter navigation folder books get per file.
-- **Settings & progress persistence** — the Auto-Play "next chapter" toggle, the global playback speed, listening positions, and library ordering survive restarts (stored companion-side, applied tool-side).
+- **Settings & progress persistence** — the Auto-Play "next chapter" toggle, the global playback speed, listening positions, and library ordering survive restarts (stored server-side, applied tool-side).
 - **Bluetooth & volume** — the connected-BT state behind the library's Bluetooth icon, and the volume-change long-poll that makes a Bluetooth device's volume buttons show the in-app volume panel instantly.
 
 ---
@@ -134,13 +134,13 @@ From the workspace root, through the memory-guarded wrapper:
 
 ```bash
 source tools/env.sh
-tools/build --dir audiobooks :app:assembleDebug :server:assembleDebug
+tools/build --dir audiobooks :app:assembleDebug
 ```
 
 or directly in this directory:
 
 ```bash
-./gradlew :app:assembleDebug :server:assembleDebug
+./gradlew :app:assembleDebug
 ```
 
 Release signing instructions are available in `RELEASE.md`.

@@ -64,4 +64,10 @@ dependencies {
         exclude(group = "androidx.camera")
     }
     implementation(libs.kotlinx.coroutines)
+    // The former :server companion, merged into the tool APK (single-module
+    // build, 2026-08-18): its manifest contributes the SDK server components
+    // (LightSdkService, media provider, consent/permission activities), its
+    // ServerBootstrapProvider wires the SDK server + scan at app start, and
+    // the tool binds to itself (lighttool.toml serverPackage = own id).
+    implementation(project(":server"))
 }

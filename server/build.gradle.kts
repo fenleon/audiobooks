@@ -1,50 +1,19 @@
 plugins {
-    alias(libs.plugins.android.application)
+    alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
-    alias(libs.plugins.kotlin.compose)
 }
 
 android {
     namespace = "com.lightphone.audiobooks.server"
     compileSdk = 36
 
-    signingConfigs {
-        // Workspace dev signing (same key as the SDK tools/emulator).
-        create("lightsdkDev") {
-            storeFile = file("../../light-sdk/sdk/keys/lightsdk-dev.jks")
-            storePassword = "android"
-            keyAlias = "lightsdk-dev"
-            keyPassword = "android"
-        }
-    }
-
     defaultConfig {
-        applicationId = "com.lightphone.audiobooks.server"
         minSdk = 34
-        targetSdk = 36
-        versionCode = 9
-        versionName = "0.5.8"
-    }
-
-    buildTypes {
-        getByName("release") {
-            // R8 dead-code elimination + resource shrinking (0.5.5) — see :app.
-            isMinifyEnabled = true
-            isShrinkResources = true
-            signingConfig = signingConfigs.getByName("lightsdkDev")
-        }
-        getByName("debug") {
-            signingConfig = signingConfigs.getByName("lightsdkDev")
-        }
     }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    buildFeatures {
-        buildConfig = true
     }
 }
 
@@ -56,19 +25,14 @@ kotlin {
 
 dependencies {
     // SDK modules come from the included ../light-sdk build (see settings.gradle.kts).
-    implementation(libs.sdk.server) {  // LightSdkServer + LightSdkService (the binder)
+    // sdk:server = LightSdkServer + LightSdkService (the binder). Since the
+    // 2026-08-18 single-module merge this library ships INSIDE the tool APK,
+    // which hosts the service and binds to itself (lighttool.toml serverPackage).
+    implementation(libs.sdk.server) {
         exclude(group = "com.google.mlkit")
         exclude(group = "androidx.camera")
     }
-    implementation(libs.sdk.client) {  // LightAudioPlayer
-        exclude(group = "com.google.mlkit")
-        exclude(group = "androidx.camera")
-    }
-    implementation(libs.sdk.ui) {      // Light design system for the status screen
-        exclude(group = "com.google.mlkit")
-        exclude(group = "androidx.camera")
-    }
-    implementation(libs.compose.activity)
+    implementation(libs.compose.activity)  // ComponentActivity for the consent/permission activities
     implementation(libs.kotlinx.coroutines)
     testImplementation(libs.junit)
 }

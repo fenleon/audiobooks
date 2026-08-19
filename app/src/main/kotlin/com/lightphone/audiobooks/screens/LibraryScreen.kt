@@ -1,5 +1,6 @@
 package com.lightphone.audiobooks.screens
 
+import android.Manifest
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,8 +12,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -25,7 +28,10 @@ import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
+import com.thelightphone.sdk.checkPermission
+import com.thelightphone.sdk.rememberPermissionRequestLauncher
 import com.thelightphone.sdk.shared.LightServiceMethod
+import com.thelightphone.sdk.shared.getOrNull
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightBottomBar
 import com.thelightphone.sdk.ui.LightIcons
@@ -68,11 +74,29 @@ class LibraryViewModel : AppLightViewModel<Unit>() {
         }
     }
 
+    /** Runs a full scan (e.g. right after the audio permission is granted —
+     *  the bootstrap scan already ran without it and returned an empty
+     *  snapshot, so a plain refresh would stay empty). */
+    fun scan() {
+        viewModelScope.launch {
+            loading.value = true
+            books.value = MediaClient.scanLibrary()
+            loading.value = false
+        }
+    }
+
     private companion object {
         const val EMPTY_REFRESH_RETRIES = 3
         const val EMPTY_REFRESH_DELAY_MS = 1_000L
     }
 }
+
+// Polls after launching the READ_MEDIA_AUDIO request until the grant lands
+// (or times out), then rescans so the library appears without a manual scan.
+// The window is human-scale: the system dialog can sit open while the user
+// reads it, so 60 s beats the 5 s that let the first version expire early.
+private const val PERMISSION_POLLS = 120
+private const val PERMISSION_POLL_DELAY_MS = 500L
 
 @InitialScreen
 class LibraryScreen(sealedActivity: SealedLightActivity) :
@@ -90,6 +114,40 @@ class LibraryScreen(sealedActivity: SealedLightActivity) :
         val themeColors by LightThemeController.colors.collectAsState()
         val volumePanel by viewModel.volumePanel.collectAsState()
         val bluetoothConnected by viewModel.bluetoothConnected.collectAsState()
+
+        // The merged build has no companion activity to ask for the audio
+        // permission (the old companion's launcher did it on first open).
+        // When the library is empty: if the permission is missing, launch the
+        // SDK permission flow (system dialog) and rescan once the grant
+        // lands; if it's present, rescan once — the bootstrap scan ran before
+        // a fresh grant (e.g. granted in system settings) and left a stale
+        // empty snapshot. Guarded so it runs once per screen instance: no
+        // dialog spam on every navigation, no scan loop on loading flips.
+        val permissionLauncher = rememberPermissionRequestLauncher(Manifest.permission.READ_MEDIA_AUDIO)
+        var permissionPrompted = remember { false }
+        LaunchedEffect(books.isEmpty(), loading) {
+            if (books.isEmpty() && !loading && !permissionPrompted) {
+                permissionPrompted = true
+                val granted = checkPermission(Manifest.permission.READ_MEDIA_AUDIO).getOrNull()
+                    ?.permissionResult == LightServiceMethod.GetPermission.Result.Granted
+                if (granted) {
+                    viewModel.scan()
+                } else {
+                    permissionLauncher?.launch()
+                    // The dialog can sit open for a while — poll past the
+                    // human-scale window (60 s), then rescan when it lands.
+                    repeat(PERMISSION_POLLS) {
+                        delay(PERMISSION_POLL_DELAY_MS)
+                        if (checkPermission(Manifest.permission.READ_MEDIA_AUDIO).getOrNull()
+                                ?.permissionResult == LightServiceMethod.GetPermission.Result.Granted
+                        ) {
+                            viewModel.scan()
+                            return@LaunchedEffect
+                        }
+                    }
+                }
+            }
+        }
 
         LightTheme(colors = themeColors) {
             Box(modifier = Modifier.fillMaxSize()) {
@@ -163,11 +221,12 @@ class LibraryScreen(sealedActivity: SealedLightActivity) :
         navigateTo(screenFactory = { SettingsScreen(it) })
     }
 
-    /** The companion (which can't launch activities from the background) hosts
-     *  a transparent activity that opens the system Bluetooth settings. */
+    /** The merged build hosts the Bluetooth-settings bridge activity itself
+     *  (it can't launch activities from the background, so the tool starts
+     *  this transparent activity, which opens the system settings). */
     private fun openBluetoothSettings() {
         startServerActivity(
-            "com.lightphone.audiobooks.server/com.lightphone.audiobooks.server.BluetoothSettingsActivity",
+            "com.lightphone.audiobooks/com.lightphone.audiobooks.server.BluetoothSettingsActivity",
         )
     }
 }

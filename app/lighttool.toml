@@ -1,8 +1,8 @@
 [tool]
 id = "com.lightphone.audiobooks"
 label = "Audiobooks"
-versionCode = 21
-versionName = "0.7.0"
+versionCode = 22
+versionName = "0.7.1"
 permissions = []
 capabilities = ["detached-audio"]
 # Single-module build (2026-08-18): the former :server companion is a library

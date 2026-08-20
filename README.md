@@ -16,7 +16,7 @@ Audiobooks is currently in **beta**. It is suitable for daily use; features and 
 
 > **Current Status:** Beta
 >
-> **Current Version:** 0.7.0 (versionCode 21)
+> **Current Version:** 0.7.1 (versionCode 22)
 
 > **About the name:** the app is called *Audiobooks* — a plain, descriptive
 > name in the Light Phone tool-naming style. Application ID:
@@ -116,7 +116,8 @@ The tool talks to its own server over the SDK binder using **media methods that 
 - **Media file serving** — a content provider serves the library files to the tool's player.
 - **Chapter metadata** — embedded chapters (MP3 CHAP frames, M4B bookmarks) are parsed into the book model, so single-file books get the same chapter navigation folder books get per file.
 - **Settings & progress persistence** — the Auto-Play "next chapter" toggle, the global playback speed, listening positions, and library ordering survive restarts (stored server-side, applied tool-side).
-- **Bluetooth & volume** — the connected-BT state behind the library's Bluetooth icon, and the volume-change long-poll that makes a Bluetooth device's volume buttons show the in-app volume panel instantly.
+- **Bluetooth & volume** — the connected-BT state behind the library's Bluetooth icon, and the volume-change long-poll that makes a Bluetooth device's volume buttons show the in-app volume panel instantly. The volume rocker itself is handled in-app (media stream, one step per press) and shows the in-app panel replica — the native LightOS panel is ringer-only for third-party tools, so volume keys are not relayed.
+- **Platform relay** — the hardware keys the tool doesn't consume (rotary wheel, camera/focus) and user preferences are forwarded to the real `com.lightos` server, so the brightness wheel, camera/flashlight, and the real haptics setting work inside the tool (see `PLATFORM-RELAY.md`).
 
 ---
 

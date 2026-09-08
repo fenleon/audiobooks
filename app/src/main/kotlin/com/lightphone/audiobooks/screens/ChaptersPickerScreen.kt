@@ -13,7 +13,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewModelScope
 import com.lightphone.audiobooks.AppLightViewModel
+import com.lightphone.audiobooks.MediaClient
 import com.lightphone.audiobooks.chapterIndexAt
 import com.lightphone.audiobooks.embeddedChapters
 import com.lightphone.audiobooks.formatTime
@@ -34,6 +36,7 @@ import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.lightClickable
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 
 class ChaptersPickerViewModel(
@@ -45,15 +48,23 @@ class ChaptersPickerViewModel(
 
     override fun onScreenShow(screen: SimpleLightScreen<Int>) {
         super.onScreenShow(screen)
-        // Highlight from the book's saved position — the Player screen keeps it
-        // fresh via SaveProgress, so the current chapter is right up to the
-        // last save. (The detached player's live position is not readable here:
-        // only the Player screen holds a handle, and only one may exist.)
+        // Highlight from the book's saved position. The snapshot passed at
+        // navigation time goes stale the moment playback advances, so re-fetch
+        // the book (the Player saves progress on pause and every few seconds
+        // while playing) and re-derive.
+        currentIndex.value = indexFor(book.progressMs)
+        viewModelScope.launch {
+            val fresh = MediaClient.getBooks().firstOrNull { it.id == book.id } ?: return@launch
+            currentIndex.value = indexFor(fresh.progressMs)
+        }
+    }
+
+    private fun indexFor(progressMs: Long): Int {
         val chapters = embeddedChapters(book)
-        currentIndex.value = if (chapters.isNotEmpty()) {
-            chapterIndexAt(chapters, book.progressMs.coerceAtLeast(0))
+        return if (chapters.isNotEmpty()) {
+            chapterIndexAt(chapters, progressMs.coerceAtLeast(0))
         } else {
-            book.parts.indices.lastOrNull { partStartMs(book, it) <= book.progressMs } ?: 0
+            book.parts.indices.lastOrNull { partStartMs(book, it) <= progressMs } ?: 0
         }
     }
 }

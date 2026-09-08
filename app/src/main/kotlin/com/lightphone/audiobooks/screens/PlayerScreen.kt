@@ -258,9 +258,9 @@ class PlayerViewModel(
         // queueing at the saved end position would play a fraction of a second
         // and stop. Only the explicit play path restarts — opening paused at a
         // chapter keeps the exact position.
-        val target = if (autoPlay && book.durationMs > 0 &&
+        val restarted = autoPlay && book.durationMs > 0 &&
             (positionMs ?: book.progressMs) >= book.durationMs - END_EPSILON_MS
-        ) {
+        val target = if (restarted) {
             0L
         } else {
             (positionMs ?: book.progressMs).coerceAtLeast(0)
@@ -285,6 +285,12 @@ class PlayerViewModel(
         adoptLive(p)
         pendingSeekMs = within
         applyPendingSeek(p)
+        if (restarted) {
+            // Persist the restart immediately — otherwise the saved end
+            // position lingers (chapter pickers, reopen) until the first
+            // periodic save.
+            saveProgress()
+        }
         if (autoPlay) p.play()
     }
 

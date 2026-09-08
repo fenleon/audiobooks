@@ -2,11 +2,7 @@
 
 *A minimalist audiobook player for the Light Phone III.*
 
-Put your audiobooks on the phone, listen to them. No accounts, no cloud, no streaming — just your books. Built for the Light Phone III, using the Light SDK.
-
-**Current version:** 0.7.2 (versionCode 23) — beta, but fine for daily use.
-
-**Heritage:** started as a fork of [Bard](https://github.com/sjkornelsen/bard), rebuilt for local-only playback.
+Play your local-only audiobooks on the Light Phone III, built using the Light SDK.
 
 ## Screenshots
 
@@ -34,11 +30,10 @@ Put your audiobooks on the phone, listen to them. No accounts, no cloud, no stre
 1. Connect your Light Phone III to a computer and open shared storage.
 2. Make a folder called `Audiobooks` (if it isn't there already).
 3. Copy one audio file directly into it (that's a book), or make a folder per book and put its files inside.
-4. Open Audiobooks. That's it. (Rescan from the settings icon → "Scan Library Now".)
+4. Open Audiobooks. (Rescan from the settings icon → "Scan Library Now".)
 
 ## Limitations
 
-- Needs Android 13 or newer.
 - To remove a book, delete its files on the device — there's no in-app delete yet.
 
 ## Building it yourself
@@ -56,6 +51,7 @@ Release signing: see `RELEASE.md`.
 No analytics, no ads, no accounts, no telemetry. Your books never leave the device.
 
 ## Legal
+Started as a fork of [Bard](https://github.com/sjkornelsen/bard), rebuilt for local-only playback.
 
 Unofficial, independent open-source project — not affiliated with or endorsed by The Light Phone, Inc. Light Phone and Light OS are trademarks of The Light Phone, Inc.
 

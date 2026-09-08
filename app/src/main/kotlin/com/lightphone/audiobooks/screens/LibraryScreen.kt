@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
 import com.lightphone.audiobooks.AppLightViewModel
 import com.lightphone.audiobooks.MediaClient
+import com.lightphone.audiobooks.PlayerSession
 import com.lightphone.audiobooks.VolumePanelOverlay
 import com.thelightphone.sdk.InitialScreen
 import com.thelightphone.sdk.LightScreen
@@ -114,6 +115,14 @@ class LibraryScreen(sealedActivity: SealedLightActivity) :
         val themeColors by LightThemeController.colors.collectAsState()
         val volumePanel by viewModel.volumePanel.collectAsState()
         val bluetoothConnected by viewModel.bluetoothConnected.collectAsState()
+        // The detached player keeps playing after the Player screen pops;
+        // PlayerSession records what it's doing. Resolved against the current
+        // book list (a deleted book hides the button).
+        val playingBook = if (PlayerSession.isPlaying) {
+            books.firstOrNull { it.id == PlayerSession.loadedBookId }
+        } else {
+            null
+        }
 
         // The merged build has no companion activity to ask for the audio
         // permission (the old companion's launcher did it on first open).
@@ -184,7 +193,12 @@ class LibraryScreen(sealedActivity: SealedLightActivity) :
                                 onClick = { openSettings() },
                                 contentDescription = "Settings",
                             ),
-                            null,
+                            playingBook?.let { book ->
+                                LightBarButton.Text(
+                                    text = "PLAYING",
+                                    onClick = { openPlayer(book) },
+                                )
+                            },
                             LightBarButton.LightIcon(
                                 // Connected state adds the underline variant
                                 // (same convention as the downloaded-arrow icon).

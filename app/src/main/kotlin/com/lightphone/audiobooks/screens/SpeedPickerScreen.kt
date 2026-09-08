@@ -88,7 +88,7 @@ class SpeedPickerScreen(sealedActivity: SealedLightActivity) :
                             // Heading = the settings row size; matches the
                             // podcast player's speed panel text.
                             variant = LightTextVariant.Heading,
-                            lighten = speed != current,
+                            underline = speed == current,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .lightClickable { goBack(speed) }

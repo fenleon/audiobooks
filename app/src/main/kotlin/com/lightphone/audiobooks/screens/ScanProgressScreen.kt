@@ -95,7 +95,6 @@ class ScanProgressScreen(sealedActivity: SealedLightActivity) :
                             "Audiobooks are being scanned in the background."
                         },
                         variant = LightTextVariant.Detail,
-                        lighten = true,
                         align = TextAlign.Center,
                         modifier = Modifier
                             .fillMaxWidth()

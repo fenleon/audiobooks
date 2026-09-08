@@ -622,7 +622,6 @@ private fun PlayerContent(
             LightText(
                 text = author,
                 variant = LightTextVariant.Copy,
-                lighten = true,
                 align = TextAlign.Center,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -633,7 +632,6 @@ private fun PlayerContent(
             LightText(
                 text = chapterLabel(chapterIndex, chapterCount),
                 variant = LightTextVariant.Detail,
-                lighten = true,
                 align = TextAlign.Center,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -655,12 +653,10 @@ private fun PlayerContent(
             LightText(
                 text = formatTime(position),
                 variant = LightTextVariant.Fine,
-                lighten = true,
             )
             LightText(
                 text = formatTime(duration),
                 variant = LightTextVariant.Fine,
-                lighten = true,
             )
         }
 
@@ -668,7 +664,6 @@ private fun PlayerContent(
             LightText(
                 text = error,
                 variant = LightTextVariant.Fine,
-                lighten = true,
                 align = TextAlign.Center,
                 modifier = Modifier
                     .fillMaxWidth()

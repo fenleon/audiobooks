@@ -111,7 +111,9 @@ class SettingsScreen(sealedActivity: SealedLightActivity) :
                                 } else {
                                     LightIcons.TOGGLE_STATE_OFF
                                 },
-                                size = 1.5f,
+                                // 2 gu ≈ the native LP3 switch pill (same as
+                                // the Chats settings toggles; was 1.5 gu).
+                                size = 2f,
                                 contentDescription = if (autoPlayNext) {
                                     "Auto-play next chapter on"
                                 } else {
@@ -128,7 +130,6 @@ class SettingsScreen(sealedActivity: SealedLightActivity) :
                             LightText(
                                 text = "next chapter",
                                 variant = LightTextVariant.Detail,
-                                lighten = true,
                                 modifier = Modifier.padding(top = 2.dp),
                             )
                         }

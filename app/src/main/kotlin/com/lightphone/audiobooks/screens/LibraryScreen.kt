@@ -264,7 +264,6 @@ private fun BookRow(
                     LightText(
                         text = book.author,
                         variant = LightTextVariant.Detail,
-                        lighten = true,
                         modifier = Modifier.padding(top = 2.dp),
                     )
                 }
@@ -272,7 +271,6 @@ private fun BookRow(
             LightText(
                 text = "${(progress.coerceIn(0f, 1f) * 100).toInt()}%",
                 variant = LightTextVariant.Fine,
-                lighten = true,
             )
         }
         LightProgressBar(
@@ -287,7 +285,6 @@ private fun StatusText(text: String) {
     LightText(
         text = text,
         variant = LightTextVariant.Copy,
-        lighten = true,
         modifier = Modifier.padding(24.dp),
     )
 }

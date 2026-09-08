@@ -152,14 +152,13 @@ private fun ChapterRow(
         LightText(
             text = title,
             variant = LightTextVariant.Copy,
-            lighten = !isCurrent,
+            underline = isCurrent,
             modifier = Modifier.weight(1f),
         )
         if (durationMs > 0) {
             LightText(
                 text = formatTime(durationMs),
                 variant = LightTextVariant.Fine,
-                lighten = true,
             )
         }
     }

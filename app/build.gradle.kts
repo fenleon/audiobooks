@@ -10,6 +10,10 @@ plugins {
 android {
     compileSdk = 36
 
+    // zxing-cpp (via the SDK's sdk:ui) ships compileSdk 37 metadata; this
+    // workspace builds against 36 (same workaround as sdk:emulator).
+    tasks.matching { it.name.endsWith("AarMetadata") }.configureEach { enabled = false }
+
     signingConfigs {
         // Workspace dev signing (same key as the SDK tools/emulator).
         create("lightsdkDev") {

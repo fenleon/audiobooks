@@ -24,11 +24,12 @@ object MediaVolumeState {
  * - **reopen-to-Player**: the SDK only offers per-screen lifecycle hooks
  *   ([LightViewModel.onScreenShow] fires on the top screen), so the trigger
  *   must run per screen — but the logic lives here once ([settleReopenToPlayer]);
- * - **volume panel**: the SDK delivers the LP3's volume rocker to the top
- *   screen's view model first ([LightKeyHandler]); show the in-app volume
- *   panel instantly (level computed locally from [MediaVolumeState] — no
- *   binder round-trip), then let the key fall through to the companion, which
- *   adjusts the media stream ([VolumePanelOverlay]).
+ * - **volume panel**: while a book is playing, the SDK delivers the LP3's
+ *   volume rocker to the top screen's view model first ([LightKeyHandler]);
+ *   show the in-app volume panel instantly (level computed locally from
+ *   [MediaVolumeState] — no binder round-trip), then let the key fall through
+ *   to the companion, which adjusts the media stream ([VolumePanelOverlay]).
+ *   While paused the panel stays hidden and the key is relayed to LightOS.
  *
  * Non-Player screens settle the reopen automatically. The Player screen
  * settles itself (it must stop its own setup when it gets popped), so it
@@ -92,7 +93,9 @@ abstract class AppLightViewModel<T> : LightViewModel<T>() {
                 // returns the current level immediately and just seeds it.
                 val known = MediaVolumeState.level ?: -1
                 val response = MediaClient.waitForVolumeChange(known) ?: continue
-                if (MediaVolumeState.level != null && response.level != MediaVolumeState.level) {
+                if (PlayerSession.isPlaying &&
+                    MediaVolumeState.level != null && response.level != MediaVolumeState.level
+                ) {
                     volumePanel.value = VolumePanelState.Media(response.level, response.max)
                 }
                 MediaVolumeState.level = response.level
@@ -112,20 +115,26 @@ abstract class AppLightViewModel<T> : LightViewModel<T>() {
         if ((keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) &&
             event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0
         ) {
-            if (MediaVolumeState.level == null) {
-                // Cold start: seed the cache first, then show the new level.
-                viewModelScope.launch {
-                    MediaClient.volumeLevel()?.let { level ->
-                        MediaVolumeState.level = level.level
-                        MediaVolumeState.max = level.max
-                        showVolumePanel(keyCode)
+            // The panel mirrors the media stream only while a book is playing;
+            // when paused the key falls through and the server relays it to
+            // LightOS (native ringer behaviour).
+            if (PlayerSession.isPlaying) {
+                if (MediaVolumeState.level == null) {
+                    // Cold start: seed the cache first, then show the new level.
+                    viewModelScope.launch {
+                        MediaClient.volumeLevel()?.let { level ->
+                            MediaVolumeState.level = level.level
+                            MediaVolumeState.max = level.max
+                            showVolumePanel(keyCode)
+                        }
                     }
+                } else {
+                    showVolumePanel(keyCode)
                 }
-            } else {
-                showVolumePanel(keyCode)
             }
             // Not handled here: the SDK forwards the rocker to the companion,
-            // which adjusts the media stream (one step per press — repeats are
+            // which adjusts the media stream while a book plays, or relays it
+            // to LightOS when paused (one step per press; repeats are
             // filtered above, and the server ignores them too).
             return false
         }

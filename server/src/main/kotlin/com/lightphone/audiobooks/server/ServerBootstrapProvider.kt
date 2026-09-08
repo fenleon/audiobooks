@@ -3,6 +3,7 @@ package com.lightphone.audiobooks.server
 import android.content.ContentProvider
 import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.Signature
 import android.database.Cursor
@@ -55,22 +56,24 @@ class ServerBootstrapProvider : ContentProvider() {
             // library scan reports PermissionRequired (empty library).
             permissionActivity = MediaPermissionActivity::class.java
             // The SDK routes the LP3's hardware keys to the server as
-            // DeviceKeyEvents. The volume rocker controls the media stream
-            // here (one step per press — Light's design; the native LightOS
-            // volume panel is ringer-only for third-party tools, so volume
-            // keys must NOT be relayed or playback volume becomes
-            // uncontrollable). Everything else — wheel, camera/focus, and the
-            // volume KEY_UP events — is forwarded to LightOS (PlatformRelay),
-            // which re-injects it into its own MainActivity: brightness wheel,
-            // camera/flashlight, and the in-app volume panel replica
-            // (VolumePanelOverlay) handle the rest (PLATFORM-RELAY.md).
+            // DeviceKeyEvents. While a book is actually playing, the volume
+            // rocker controls the media stream here (one step per press —
+            // Light's design; the native LightOS volume panel is ringer-only
+            // for third-party tools, so volume keys must NOT be relayed or
+            // playback volume becomes uncontrollable). Everything else —
+            // wheel, camera/focus, the volume KEY_UP events, and the rocker
+            // while paused — is forwarded to LightOS (PlatformRelay), which
+            // re-injects it into its own MainActivity: brightness wheel,
+            // camera/flashlight, native ringer panel, and the in-app volume
+            // panel replica (VolumePanelOverlay) handle the rest
+            // (PLATFORM-RELAY.md).
             onDeviceKeyEvent = { _, event ->
                 val volumeDown = event.action == KeyEvent.ACTION_DOWN &&
                     (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP ||
                         event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)
-                if (volumeDown) {
+                val audio = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                if (volumeDown && audio.isMusicActive) {
                     if ((event.repeatCount ?: 0) == 0) { // one step per press; drop auto-repeat
-                        val audio = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
                         when (event.keyCode) {
                             KeyEvent.KEYCODE_VOLUME_UP -> audio.adjustStreamVolume(
                                 AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, 0,
@@ -82,6 +85,23 @@ class ServerBootstrapProvider : ContentProvider() {
                     }
                 } else {
                     PlatformRelay.sendDeviceKeyEvent(event)
+                    // Camera key: the relay opens LightOS's camera, but a
+                    // relayed event never foregrounds com.lightos (the real key
+                    // is captured in MainActivity.onKeyDown with deviceId=2 /
+                    // source=0x101 and the camera screen opens visibly; the
+                    // relayed one mounts the camera hidden and flips greyscale
+                    // with nothing on screen). Launch HOME so com.lightos (the
+                    // home app) comes to front with the camera screen already
+                    // open, matching the toolbox-key behaviour. (Chats'
+                    // verified method, 2026-09.)
+                    if (event.keyCode == KeyEvent.KEYCODE_CAMERA &&
+                        event.action == KeyEvent.ACTION_DOWN && (event.repeatCount ?: 0) == 0
+                    ) {
+                        context.startActivity(
+                            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
+                    }
                 }
             }
         }

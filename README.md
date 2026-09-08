@@ -2,32 +2,13 @@
 
 *A minimalist audiobook player for the Light Phone III.*
 
-Audiobooks is an audiobook player built specifically for the Light Phone III. It plays audiobooks stored on your device in a calm, text-first interface inspired by the philosophy of Light OS.
+Put your audiobooks on the phone, listen to them. No accounts, no cloud, no streaming — just your books. Built for the Light Phone III, using the Light SDK.
 
-Instead of treating audiobooks as another streaming platform, Audiobooks treats them as books. Your library lives on your device, and the player stays out of the way so you can focus on listening.
+**Current version:** 0.7.2 (versionCode 23) — beta, but fine for daily use.
 
-There are no recommendations, storefronts, advertisements, social features, or cover art — just your books.
+**Heritage:** started as a fork of [Bard](https://github.com/sjkornelsen/bard), rebuilt for local-only playback.
 
-Built with the Light ethos: **stripped back, calm, and intentionally small**. Books load from the device — a single shared folder, no accounts, no cloud. Audiobooks is a **real LightOS tool**: a thin interface built on the Light SDK design system; the on-device library scan and the SDK server run inside the same APK (single-module build since 0.7.0), and playback runs inside the tool on the SDK's detached audio player, so background listening survives the tool closing.
-
-**Heritage:** Audiobooks began as a fork of [Bard](https://github.com/sjkornelsen/bard) by sjkornelsen, rebuilt around local-only playback.
-
-Audiobooks is currently in **beta**. It is suitable for daily use; features and behavior may still evolve before a stable release.
-
-> **Current Status:** Beta
->
-> **Current Version:** 0.7.2 (versionCode 23)
-
-> **About the name:** the app is called *Audiobooks* — a plain, descriptive
-> name in the Light Phone tool-naming style. Application ID:
-> `com.lightphone.audiobooks` (a single APK since 0.7.0 — the old companion
-> package `com.lightphone.audiobooks.server` is gone).
-
----
-
-# Screenshots
-
-The library, player, chapter list, settings, and speed picker on a Light Phone III (light-on-black):
+## Screenshots
 
 <p align="center">
   <img src="screenshots/library.png" width="32%" alt="Library" />
@@ -37,199 +18,45 @@ The library, player, chapter list, settings, and speed picker on a Light Phone I
   <img src="screenshots/speed.png" width="32%" alt="Playback speed" />
 </p>
 
----
+## What it does
 
-# Features
+- Plays audiobooks stored on the phone. Books stay on your device.
+- One audio file = one book. One folder of audio files = one book, played in order (name your files 01, 02, 03… to be safe).
+- Chapters: folder books list their files, single-file books use their embedded chapter tags (MP3 chapter frames, M4B bookmarks).
+- Remembers where you left off.
+- Playback speed from 0.5x to 2x, and an Auto-Play toggle for whether the next chapter starts on its own.
+- After a pause longer than 5 minutes, playback jumps back 15 seconds so you re-orient.
+- Plays in the background, with a media notification and lockscreen controls.
+- Formats: MP3, M4B, M4A, AAC, OGG, OGA, OPUS, FLAC, WAV.
 
-## Local Audiobooks
+## Getting your books on the phone
 
-Audiobooks plays audiobooks stored on your device, without a cloud account or subscription.
+1. Connect your Light Phone III to a computer and open shared storage.
+2. Make a folder called `Audiobooks` (if it isn't there already).
+3. Copy one audio file directly into it (that's a book), or make a folder per book and put its files inside.
+4. Open Audiobooks. That's it. (Rescan from the settings icon → "Scan Library Now".)
 
-### Supported Formats
+## Limitations
 
-- MP3, M4B
-- M4A, AAC, OGG, OGA, OPUS, FLAC, WAV (all natively decoded by the platform — nothing bundled)
+- Needs Android 13 or newer.
+- To remove a book, delete its files on the device — there's no in-app delete yet.
 
-### Features
+## Building it yourself
 
-- Single-file audiobooks
-- Multi-file audiobooks organized as folders, played continuously in embedded track order (disc/track tags, fallback: natural filename order)
-- Chapter list with per-chapter seek — folder books use their files, single-file books use their embedded chapters (MP3 chapter tags, M4B bookmarks)
-- Chapter-scoped time and progress in the player; whole-book percent in the library
-- Playback speed (0.5x–2x), with an optional Auto-Play "next chapter" toggle
-- Rewind on resume: after a long pause (>5 min), playback jumps back 15 s so you re-orient (baked in — no toggle)
-- Persistent listening progress across the entire book
-- Resume playback
-- Alphabetical library ordering (by book title)
-- Background playback with a media notification and lockscreen/system media controls
-- In-app volume panel on the hardware volume buttons — including a connected Bluetooth device's volume buttons
-
-Audiobooks scans the shared `Audiobooks` folder at any depth. Individual audio files (any supported format) directly inside `Audiobooks/` are treated as standalone books. Every folder inside `Audiobooks/` is treated as a single audiobook, with all supported audio files inside it played continuously in natural order. Audiobooks never copies books into app-private storage.
-
----
-
-# Getting Started
-
-## Local Audiobooks
-
-1. Connect your Light Phone III to your computer.
-2. Create an `Audiobooks` folder in shared device storage if it does not already exist.
-3. Either:
-  - copy a single audio file (MP3, M4B, M4A, AAC, OGG, OGA, OPUS, FLAC, WAV) directly into the Audiobooks folder, or
-  - create one folder per audiobook and place its audio files inside.
-
-Files play in embedded track order (fallback: natural filename order), so numbering them (01, 02, 03, …) is recommended.
-
-4. In Audiobooks, open the app — the library lists every book found in the folder (tap the settings icon in the library's bottom bar, then "Scan Library Now", to rescan).
-
-Android may request permission to read your audio library. Audiobooks does **not** request broad "All Files" storage access.
-
----
-
-# Current Limitations
-
-Audiobooks is currently designed for the Light Phone III and Android 13 or newer.
-
-Current limitations include:
-
-- Books are removed by deleting their files on the device — there is no in-app delete UI yet.
-- Audiobooks ships as a single APK that hosts its own Light SDK server (the media methods it needs are not yet in the production LightOS server `com.lightos`); the app binds to itself, so no companion is installed.
-
----
-
-# Architecture
-
-Audiobooks is a native Android application written in Kotlin using Jetpack Compose.
-
-Its architecture is intentionally simple, with separate components responsible for local audiobook discovery, playback, progress persistence, and the interface.
-
-The UI is built on the Light SDK's design system (`sdk:ui`) and playback runs on the SDK's detached `LightAudioPlayer` (ExoPlayer). Audiobooks is a standalone Gradle project that consumes the SDK as an included build — see `settings.gradle.kts`. It is a **real LightOS tool**: the `:app` module is built with the SDK's tool plugin (launched from the LightOS toolbox) and owns playback through the SDK's detached audio service — background listening and the media notification live with the tool. The former `:server` companion is merged into the same APK as an Android library: it contributes the SDK server components (the `LightSdkService` the tool binds to, the media file provider, the consent/permission activities) and runs the library scan, the stores, and the volume/BT methods — the privileged work the tool plugin forbids in the tool's own source. The tool binds to itself (`serverPackage = com.lightphone.audiobooks`), so there is exactly one APK to install.
-
----
-
-# What the merged server adds beyond the current LightOS SDK
-
-The tool talks to its own server over the SDK binder using **media methods that are additive to the SDK** — they were added to `sdk:shared`'s `LightServiceMethod` and are implemented inside the merged APK. The production LightOS server (`com.lightos`) does **not** implement these yet; the merged server is the reference implementation, and the plan is for Light to ship the same surface so tools can target `com.lightos` directly. The merged server provides:
-
-- **The media RPC surface** — `GetBooks`, `ScanLibrary`, `DeleteBook`, `GetAutoPlayNext`/`SetAutoPlayNext`, `GetPlaybackSpeed`/`SetPlaybackSpeed`, `GetVolumeLevel`, `GetBluetoothConnected`, `WaitForVolumeChange`, and `SaveProgress`.
-- **Library scanning** — a recursive, incremental scan of `/sdcard/Audiobooks/` (any depth) into single-file and folder books, with titles and chapter names read from embedded metadata (album/title tags) rather than file names.
-- **Media file serving** — a content provider serves the library files to the tool's player.
-- **Chapter metadata** — embedded chapters (MP3 CHAP frames, M4B bookmarks) are parsed into the book model, so single-file books get the same chapter navigation folder books get per file.
-- **Settings & progress persistence** — the Auto-Play "next chapter" toggle, the global playback speed, listening positions, and library ordering survive restarts (stored server-side, applied tool-side).
-- **Bluetooth & volume** — the connected-BT state behind the library's Bluetooth icon, and the volume-change long-poll that makes a Bluetooth device's volume buttons show the in-app volume panel instantly. The volume rocker itself is handled in-app (media stream, one step per press) and shows the in-app panel replica — the native LightOS panel is ringer-only for third-party tools, so volume keys are not relayed.
-- **Platform relay** — the hardware keys the tool doesn't consume (rotary wheel, camera/focus) and user preferences are forwarded to the real `com.lightos` server, so the brightness wheel, camera/flashlight, and the real haptics setting work inside the tool (see `PLATFORM-RELAY.md`).
-
----
-
-# Development
-
-## Requirements
-
-- JDK 17 or 21 (the workspace provides both under `tools/`)
-- Android SDK (API 36)
-- A sibling checkout of the Light SDK at `../light-sdk` (consumed as an included build). The local checkout carries a few additive Audiobooks patches (media methods, the tool→companion activity launcher, token sync — documented in the workspace `AGENTS.md`); the patched tree is mirrored at **https://github.com/fenleon/light-sdk** (fork of `lightphone/light-sdk`, `origin` there), with `upstream` pointing at the original.
-
-## Build
-
-From the workspace root, through the memory-guarded wrapper:
-
-```bash
-source tools/env.sh
-tools/build --dir audiobooks :app:assembleDebug
-```
-
-or directly in this directory:
+Needs JDK 17/21, the Android SDK (API 36), and the Light SDK checked out as a sibling folder at `../light-sdk` (fork: [fenleon/light-sdk](https://github.com/fenleon/light-sdk)).
 
 ```bash
 ./gradlew :app:assembleDebug
 ```
 
-Release signing instructions are available in `RELEASE.md`.
+Release signing: see `RELEASE.md`.
 
----
+## Privacy
 
-# Privacy & Security
+No analytics, no ads, no accounts, no telemetry. Your books never leave the device.
 
-Audiobooks does not include analytics, advertising, telemetry, or user accounts.
+## Legal
 
-Local audiobooks remain on your device.
+Unofficial, independent open-source project — not affiliated with or endorsed by The Light Phone, Inc. Light Phone and Light OS are trademarks of The Light Phone, Inc.
 
-While listening, Audiobooks runs a foreground service so playback continues when the screen is off or Audiobooks is in the background. The playback notification shows the current book title; your library stays on-device.
-
----
-
-# Roadmap
-
-Planned improvements include:
-
-- In-app library management (remove books)
-- Additional playback refinements
-- Performance and stability improvements
-
----
-
-# Contributing
-
-Contributions, bug reports, feature requests, and suggestions are welcome.
-
-If you encounter a bug, please include:
-
-- Audiobooks version
-- Light Phone III software version
-- Steps to reproduce
-- Expected behavior
-- Actual behavior
-
-Before opening an issue, please check whether the problem has already been reported.
-
----
-
-# Frequently Asked Questions
-
-### Does Audiobooks require an account?
-
-No.
-
-Audiobooks play entirely offline and do not require an account.
-
----
-
-### Does Audiobooks collect analytics or usage data?
-
-No.
-
-Audiobooks does not include analytics, advertising, telemetry, or user tracking.
-
----
-
-### Does Audiobooks support offline listening?
-
-Yes.
-
-Local audiobooks are always available offline.
-
----
-
-# Important
-
-Audiobooks is an independent, unofficial open-source project.
-
-Audiobooks is not affiliated with, endorsed by, sponsored by, or approved by The Light Phone, Inc.
-
-Light Phone and Light OS are trademarks of The Light Phone, Inc.
-
-Other trademarks are the property of their respective owners and are used solely to identify compatibility with third-party products and services.
-
----
-
-# License
-
-Audiobooks is licensed under the MIT License.
-
-See [LICENSE](LICENSE) for the complete license text.
-
-Audiobooks incorporates selected resources derived from the Light SDK. Applicable notices are included in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-
----
-
-Built with ❤️ for the Light Phone community.
+MIT licensed — see [LICENSE](LICENSE). Includes resources from the Light SDK, noted in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -4,7 +4,9 @@
 
 Play your local-only audiobooks on the Light Phone III, built using the Light SDK.
 
+
 <p align="center">Support my work by leaving me a <a href="https://ko-fi.com/fenleon">tip</a> or  <a href=https://github.com/sponsors/fenleon">sponsoring me</a>. A little goes a long way.</p>
+
 
 
 ## Screenshots

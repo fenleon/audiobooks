@@ -58,6 +58,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** Everything the player screen renders, live or preview. */
 data class PlayerUiState(
@@ -143,12 +144,25 @@ class PlayerViewModel(
     /** The detached handle for this screen, created on first need and released
      *  when the screen is popped (releasing does not stop detached playback). */
     private suspend fun player(): LightAudioPlayer? {
-        playerHandle?.let { return if (it.awaitReady()) it else null }
+        playerHandle?.let { h ->
+            if (withTimeoutOrNull(READY_TIMEOUT_MS) { h.awaitReady() } == true) return h
+            // The controller connection can die without emitting Unavailable
+            // (LP3 cached-app freezer unfreeze) — awaitReady would suspend
+            // forever and every action path hangs silently. Drop and rebuild.
+            runCatching { h.release() }
+            playerHandle = null
+        }
         val p = runCatching {
             audio.newPlayer(usage = LightAudioUsage.Speech, playback = LightAudioPlayback.Detached)
         }.getOrNull() ?: return null
         playerHandle = p
-        return if (p.awaitReady()) p else null
+        return if (withTimeoutOrNull(READY_TIMEOUT_MS) { p.awaitReady() } == true) {
+            p
+        } else {
+            runCatching { p.release() }
+            playerHandle = null
+            null
+        }
     }
 
     private fun adoptLive(p: LightAudioPlayer) {
@@ -468,6 +482,8 @@ class PlayerViewModel(
         /** Rewind-on-resume: pause gap threshold and the jump back. */
         const val REWIND_GAP_MS = 5 * 60 * 1000L
         const val REWIND_MS = 15_000L
+        /** How long a player handle gets to connect before it is replaced. */
+        const val READY_TIMEOUT_MS = 3_000L
     }
 }
 

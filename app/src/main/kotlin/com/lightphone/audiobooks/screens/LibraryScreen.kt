@@ -207,7 +207,7 @@ class LibraryScreen(sealedActivity: SealedLightActivity) :
                                 } else {
                                     LightIcons.BLUETOOTH
                                 },
-                                onClick = { openBluetoothSettings() },
+                                onClick = { openBluetoothBridge() },
                                 contentDescription = if (bluetoothConnected) {
                                     "Bluetooth connected"
                                 } else {
@@ -238,7 +238,7 @@ class LibraryScreen(sealedActivity: SealedLightActivity) :
     /** The merged build hosts the Bluetooth-settings bridge activity itself
      *  (it can't launch activities from the background, so the tool starts
      *  this transparent activity, which opens the system settings). */
-    private fun openBluetoothSettings() {
+    private fun openBluetoothBridge() {
         startServerActivity(
             "com.lightphone.audiobooks/com.lightphone.audiobooks.server.BluetoothSettingsActivity",
         )

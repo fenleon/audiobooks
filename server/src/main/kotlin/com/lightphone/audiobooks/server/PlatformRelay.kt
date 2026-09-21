@@ -27,6 +27,7 @@ object PlatformRelay {
 
     @Volatile private var binder: IBinder? = null
     @Volatile private var token: String? = null
+    @Volatile private var appContext: Context? = null
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -42,6 +43,7 @@ object PlatformRelay {
 
     /** Call once at server bootstrap; LightOS's SDK service is already running. */
     fun bind(context: Context) {
+        appContext = context.applicationContext
         context.applicationContext.bindService(
             Intent(LightConstants.ACTION_BIND_SDK_SERVICE).setPackage(PLATFORM),
             connection,
@@ -62,8 +64,22 @@ object PlatformRelay {
         return LightServiceMethod.GetUserPreferences.decodeResponse(result.data)
     }
 
+    /**
+     * A platform-service death (e.g. an OS update killing com.lightos) can leave
+     * the connection dead with no framework rebind scheduled — events then
+     * silently no-op until the tool process restarts. Rebind on demand.
+     */
+    private fun ensureBinder(): IBinder? {
+        binder?.let { return it }
+        appContext?.let { context ->
+            runCatching { context.unbindService(connection) } // no-op if unbound
+            bind(context)
+        }
+        return null // binder arrives async via onServiceConnected
+    }
+
     private fun request(methodId: String, payload: String): LightResult<String>? {
-        val serviceBinder = binder ?: return null
+        val serviceBinder = ensureBinder() ?: return null
         if (token == null) {
             val tokenResult = transact(
                 serviceBinder,

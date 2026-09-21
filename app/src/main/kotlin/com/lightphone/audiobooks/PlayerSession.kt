@@ -45,14 +45,29 @@ suspend fun settleReopenToPlayer(
     book: LightServiceMethod.GetBooks.Book? = null,
 ): Boolean {
     if (!PlayerSession.reopenPending) return false
-    if (book != null && book.id == PlayerSession.loadedBookId && PlayerSession.isPlaying) {
+    if (book != null && book.id == PlayerSession.loadedBookId) {
+        // The live book's Player settles the reopen whether it is playing or
+        // paused — a paused book's Player popped forever here, and with
+        // reopenPending never cleared every later screen-show popped again
+        // (the 2026-09-14 LP3 "stuck screen, taps dead" wedge).
         PlayerSession.reopenPending = false
         return false
     }
     if (book == null && screen is LibraryScreen) {
-        val playingBookId = PlayerSession.loadedBookId ?: return false
-        if (!PlayerSession.isPlaying) return false
-        val playingBook = MediaClient.getBooks().firstOrNull { it.id == playingBookId } ?: return false
+        val playingBookId = PlayerSession.loadedBookId ?: run {
+            PlayerSession.reopenPending = false
+            return false
+        }
+        if (!PlayerSession.isPlaying) {
+            // Playback stopped in the background: nothing to return to. Consume
+            // the flag — leaving it set pops every screen forever.
+            PlayerSession.reopenPending = false
+            return false
+        }
+        val playingBook = MediaClient.getBooks().firstOrNull { it.id == playingBookId } ?: run {
+            PlayerSession.reopenPending = false
+            return false
+        }
         // The pushed Player's own show settles the flag.
         screen.navigateTo(screenFactory = { activity -> PlayerScreen(activity, playingBook) })
         return true

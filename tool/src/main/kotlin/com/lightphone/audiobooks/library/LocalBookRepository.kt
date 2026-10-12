@@ -36,6 +36,10 @@ sealed interface LocalScanResult {
  * re-read — only new/changed files hit MediaMetadataRetriever.
  */
 object LocalBookRepository {
+    /** Tool Manager upload directory, relative to the tool's filesDir — must
+     *  match the FileBrowserSpec path in ToolEntryPoint. */
+    const val TOOL_MANAGER_BOOKS_DIR = "books"
+
     private val scanMutex = Mutex()
     private val mutableBooks = MutableStateFlow<List<Audiobook>>(emptyList())
     private val mutableScanResult = MutableStateFlow<LocalScanResult?>(null)
@@ -49,6 +53,12 @@ object LocalBookRepository {
 
     private lateinit var filesDir: File
 
+    /** The Tool Manager upload root: files the user uploads from their
+     *  computer's browser land here and are always walk-visible (app-private
+     *  storage — no MediaStore indexing needed). */
+    private val toolManagerBooksRoot: File
+        get() = File(File(filesDir, "shared"), TOOL_MANAGER_BOOKS_DIR)
+
     val books: StateFlow<List<Audiobook>> = mutableBooks.asStateFlow()
     val scanResult: StateFlow<LocalScanResult?> = mutableScanResult.asStateFlow()
     val scanning: StateFlow<Boolean> = mutableScanning.asStateFlow()
@@ -59,6 +69,14 @@ object LocalBookRepository {
 
     fun init(filesDir: File) {
         this.filesDir = filesDir
+    }
+
+    /** Rescans only when this process already has the library wired (e.g. the
+     *  Tool Manager data-update hook); a fresh process rescans on the first
+     *  Library show anyway. */
+    suspend fun scanIfInitialized() {
+        if (!::filesDir.isInitialized) return
+        scan()
     }
 
     suspend fun scan(): LocalScanResult {
@@ -99,18 +117,24 @@ object LocalBookRepository {
     }
 
     private suspend fun scanFresh(generation: Int): LocalScanResult = withContext(Dispatchers.IO) {
-        // The existence-only probe distinguishes a missing top-level folder
-        // from an empty one; all file discovery is the walk itself.
-        val rootDirectory = File(
+        // Two roots: the shared /sdcard/Audiobooks/ folder, and the Tool
+        // Manager upload directory (files/shared/books — app-private, so its
+        // files are always visible to the walk; shared-storage files only
+        // appear once MediaStore indexes them). All file discovery is the
+        // walk itself.
+        val sharedRoot = File(
             Environment.getExternalStorageDirectory(),
             AUDIOBOOKS_DIRECTORY,
         )
-        val folderExists = rootDirectory.isDirectory
-        // Discover every audio file under Audiobooks/ (any depth), so books kept in
-        // subfolders are indexed directly.
-        val candidates = if (folderExists) {
+        val roots = listOf(sharedRoot, toolManagerBooksRoot)
+        // The existence-only probe distinguishes a missing top-level folder
+        // from an empty one; all file discovery is the walk itself.
+        val folderExists = sharedRoot.isDirectory
+        // Discover every audio file under each root (any depth), so books kept
+        // in subfolders are indexed directly.
+        val candidates = roots.filter { it.isDirectory }.flatMap { root ->
             runCatching {
-                rootDirectory.walkTopDown()
+                root.walkTopDown()
                     .filter { file ->
                         file.isFile &&
                             !file.name.startsWith('.') &&
@@ -118,8 +142,6 @@ object LocalBookRepository {
                     }
                     .toList()
             }.getOrDefault(emptyList())
-        } else {
-            emptyList()
         }
 
         val cache = metadataCache()
@@ -176,7 +198,8 @@ object LocalBookRepository {
                 displayName.endsWith(".m4a", ignoreCase = true)
             val ext = displayName.substringAfterLast('.', "").lowercase()
             formatCounts[ext] = (formatCounts[ext] ?: 0) + 1
-            val folderPath = folderPathOf(path, rootDirectory)
+            val folderPath = roots.firstOrNull { path.startsWith(it.absolutePath) }
+                ?.let { folderPathOf(path, it) }
             val stableId = "file:${path.normalizedHash()}"
             if (folderPath == null) {
                 val stored = AudiobookProgressStore.read(AudiobookSource.Local, stableId)

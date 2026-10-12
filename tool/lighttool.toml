@@ -1,10 +1,10 @@
 [tool]
 id = "com.lightphone.audiobooks"
 label = "Audiobooks"
-versionCode = 27
-versionName = "0.8.0"
+versionCode = 28
+versionName = "0.9.0"
 permissions = ["android.permission.READ_MEDIA_AUDIO", "android.permission.POST_NOTIFICATIONS"]
-capabilities = ["detached-audio"]
+capabilities = ["detached-audio", "tool-manager-provider"]
 # Tool Library line: binds Light's own platform service (com.lightos). The
 # 0.8.0 fold merges the former :server companion into this scanned module —
 # the /sdcard/Audiobooks scan, stores, and playback file access run

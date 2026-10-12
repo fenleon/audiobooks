@@ -1,35 +1,17 @@
 package com.lightphone.audiobooks
 
-import android.view.KeyEvent
 import androidx.lifecycle.viewModelScope
+import com.lightphone.audiobooks.library.Audiobook
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SimpleLightScreen
-import com.thelightphone.sdk.shared.LightServiceMethod
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-
-/** The tool's last-known media volume — seeded from the server and updated on
- *  every rocker press, so the volume panel bar moves instantly (the server's
- *  adjust lands a binder round-trip later). */
-object MediaVolumeState {
-    var level: Int? = null
-    var max: Int = 0
-}
 
 /**
  * Base view model for every Audiobooks screen. One definition of the shared
- * behaviors:
- * - **reopen-to-Player**: the SDK only offers per-screen lifecycle hooks
- *   ([LightViewModel.onScreenShow] fires on the top screen), so the trigger
- *   must run per screen — but the logic lives here once ([settleReopenToPlayer]);
- * - **volume panel**: while a book is playing, the SDK delivers the LP3's
- *   volume rocker to the top screen's view model first ([LightKeyHandler]);
- *   show the in-app volume panel instantly (level computed locally from
- *   [MediaVolumeState] — no binder round-trip), then let the key fall through
- *   to the companion, which adjusts the media stream ([VolumePanelOverlay]).
- *   While paused the panel stays hidden and the key is relayed to LightOS.
+ * behavior:
+ * **reopen-to-Player** — the SDK only offers per-screen lifecycle hooks
+ * ([LightViewModel.onScreenShow] fires on the top screen), so the trigger must
+ * run per screen — but the logic lives here once ([settleReopenToPlayer]).
  *
  * Non-Player screens settle the reopen automatically. The Player screen
  * settles itself (it must stop its own setup when it gets popped), so it
@@ -38,131 +20,20 @@ object MediaVolumeState {
 abstract class AppLightViewModel<T> : LightViewModel<T>() {
 
     /** The book this screen's Player is bound to (Player screen only). */
-    open val reopenBook: LightServiceMethod.GetBooks.Book? = null
+    open val reopenBook: Audiobook? = null
 
     private val handlesReopenItself: Boolean get() = reopenBook != null
 
-    /** The volume panel's state (null = hidden). Hosted by every screen's root. */
-    val volumePanel = MutableStateFlow<VolumePanelState?>(null)
-
-    /** Whether a Bluetooth audio device is connected — the Library's icon. */
-    val bluetoothConnected = MutableStateFlow(false)
-
-    private var volumeWatcherJob: Job? = null
-
-    fun dismissVolumePanel() {
-        volumePanel.value = null
-    }
-
     override fun onScreenShow(screen: SimpleLightScreen<T>) {
         super.onScreenShow(screen)
-        // Keep the volume cache fresh (cheap; lets the panel bar move without
-        // a round-trip on the next press) and load the BT icon state right
-        // away (the watcher below only refreshes it on its own cadence).
-        refreshVolumeLevel()
-        refreshBluetoothConnected()
-        startVolumeWatcher()
         if (handlesReopenItself) return
         viewModelScope.launch {
             if (settleReopenToPlayer(screen)) return@launch
         }
     }
 
-    override fun onScreenHide(screen: SimpleLightScreen<T>) {
-        super.onScreenHide(screen)
-        stopVolumeWatcher()
-    }
-
     override fun onAppPause() {
-        stopVolumeWatcher()
         if (PlayerSession.isPlaying) PlayerSession.reopenPending = true
         super.onAppPause()
-    }
-
-    /** While this screen is showing, wait for external media-volume changes (a
-     *  connected BT device's own volume buttons — AVRCP) and surface them in
-     *  the panel immediately via the companion's long-poll, and keep the BT
-     *  icon fresh. Stops on hide/pause, so it costs nothing in the background.
-     *  A request is outstanding at most one at a time (the server blocks it
-     *  until the volume changes or its ~2 s timeout). */
-    private fun startVolumeWatcher() {
-        if (volumeWatcherJob?.isActive == true) return
-        volumeWatcherJob = viewModelScope.launch {
-            while (isActive) {
-                // A null cache (cold start) uses -1 so the first request
-                // returns the current level immediately and just seeds it.
-                val known = MediaVolumeState.level ?: -1
-                val response = MediaClient.waitForVolumeChange(known) ?: continue
-                if (PlayerSession.isPlaying &&
-                    MediaVolumeState.level != null && response.level != MediaVolumeState.level
-                ) {
-                    volumePanel.value = VolumePanelState.Media(response.level, response.max)
-                }
-                MediaVolumeState.level = response.level
-                MediaVolumeState.max = response.max
-                val bluetoothConnectedNow = MediaClient.bluetoothConnected()
-                if (bluetoothConnectedNow != null) bluetoothConnected.value = bluetoothConnectedNow
-            }
-        }
-    }
-
-    private fun stopVolumeWatcher() {
-        volumeWatcherJob?.cancel()
-        volumeWatcherJob = null
-    }
-
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
-        if ((keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) &&
-            event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0
-        ) {
-            // The panel mirrors the media stream only while a book is playing;
-            // when paused the key falls through and the server relays it to
-            // LightOS (native ringer behaviour).
-            if (PlayerSession.isPlaying) {
-                if (MediaVolumeState.level == null) {
-                    // Cold start: seed the cache first, then show the new level.
-                    viewModelScope.launch {
-                        MediaClient.volumeLevel()?.let { level ->
-                            MediaVolumeState.level = level.level
-                            MediaVolumeState.max = level.max
-                            showVolumePanel(keyCode)
-                        }
-                    }
-                } else {
-                    showVolumePanel(keyCode)
-                }
-            }
-            // Not handled here: the SDK forwards the rocker to the companion,
-            // which adjusts the media stream while a book plays, or relays it
-            // to LightOS when paused (one step per press; repeats are
-            // filtered above, and the server ignores them too).
-            return false
-        }
-        return super.onKeyDown(keyCode, event)
-    }
-
-    private fun showVolumePanel(keyCode: Int) {
-        val current = MediaVolumeState.level ?: return
-        val newLevel = when (keyCode) {
-            KeyEvent.KEYCODE_VOLUME_UP -> (current + 1).coerceAtMost(MediaVolumeState.max.coerceAtLeast(1))
-            else -> (current - 1).coerceAtLeast(0)
-        }
-        MediaVolumeState.level = newLevel
-        volumePanel.value = VolumePanelState.Media(newLevel, MediaVolumeState.max)
-    }
-
-    private fun refreshVolumeLevel() {
-        viewModelScope.launch {
-            MediaClient.volumeLevel()?.let { level ->
-                MediaVolumeState.level = level.level
-                MediaVolumeState.max = level.max
-            }
-        }
-    }
-
-    private fun refreshBluetoothConnected() {
-        viewModelScope.launch {
-            MediaClient.bluetoothConnected()?.let { bluetoothConnected.value = it }
-        }
     }
 }

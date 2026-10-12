@@ -12,12 +12,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
+import com.lightphone.audiobooks.AudiobookLibrary
 import com.lightphone.audiobooks.AppLightViewModel
-import com.lightphone.audiobooks.MediaClient
 import com.lightphone.audiobooks.formatSpeed
-import com.lightphone.audiobooks.VolumePanelOverlay
+import com.lightphone.audiobooks.library.PlaybackSettingsStore
 import com.thelightphone.sdk.LightScreen
-import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
@@ -31,8 +30,10 @@ import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.lightClickable
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class SpeedPickerViewModel : AppLightViewModel<Float>() {
 
@@ -42,7 +43,7 @@ class SpeedPickerViewModel : AppLightViewModel<Float>() {
     override fun onScreenShow(screen: SimpleLightScreen<Float>) {
         super.onScreenShow(screen)
         viewModelScope.launch {
-            current.value = MediaClient.playbackSpeed() ?: 1.0f
+            current.value = withContext(Dispatchers.IO) { PlaybackSettingsStore.playbackSpeed }
         }
     }
 }
@@ -58,13 +59,15 @@ class SpeedPickerScreen(sealedActivity: SealedLightActivity) :
     override val viewModelClass: Class<SpeedPickerViewModel>
         get() = SpeedPickerViewModel::class.java
 
-    override fun createViewModel(): SpeedPickerViewModel = SpeedPickerViewModel()
+    override fun createViewModel(): SpeedPickerViewModel {
+        AudiobookLibrary.init(lightContext.filesDir)
+        return SpeedPickerViewModel()
+    }
 
     @Composable
     override fun Content() {
         val current by viewModel.current.collectAsState()
         val themeColors by LightThemeController.colors.collectAsState()
-        val volumePanel by viewModel.volumePanel.collectAsState()
 
         LightTheme(colors = themeColors) {
             Box(modifier = Modifier.fillMaxSize()) {
@@ -96,14 +99,8 @@ class SpeedPickerScreen(sealedActivity: SealedLightActivity) :
                         )
                     }
                 }
-                // Full-screen overlay on top of everything (the panel is a
-                // visual replica — not interactive).
-                VolumePanelOverlay(
-                    state = volumePanel,
-                    onDismiss = { viewModel.dismissVolumePanel() },
-                )
+                }
             }
         }
-    }
     }
 }

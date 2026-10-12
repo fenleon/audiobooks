@@ -1,8 +1,8 @@
-package com.lightphone.audiobooks.server.library
+package com.lightphone.audiobooks.library
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+import kotlin.test.Test
 
 /** JVM coverage for the natural filename ordering used by folder-book parts. */
 class NaturalOrderTest {

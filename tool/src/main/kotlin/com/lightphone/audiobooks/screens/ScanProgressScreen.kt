@@ -15,9 +15,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
+import com.lightphone.audiobooks.AudiobookLibrary
 import com.lightphone.audiobooks.AppLightViewModel
-import com.lightphone.audiobooks.MediaClient
-import com.lightphone.audiobooks.VolumePanelOverlay
+import com.lightphone.audiobooks.library.LocalBookRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
@@ -42,7 +42,7 @@ class ScanProgressViewModel : AppLightViewModel<Unit>() {
         if (started) return
         started = true
         viewModelScope.launch {
-            MediaClient.scanLibrary()
+            LocalBookRepository.scan()
             done.value = true
         }
     }
@@ -51,8 +51,8 @@ class ScanProgressViewModel : AppLightViewModel<Unit>() {
 /**
  * Scan progress panel, mirroring the sync workflow of the podcast/calendar
  * tools: a status line while the scan runs, and an X to dismiss straight back
- * to the library. The companion scans in the background and the library
- * refreshes from its result when this panel is dismissed.
+ * to the library. The scan runs in process and the library refreshes from its
+ * result when this panel is dismissed.
  */
 class ScanProgressScreen(sealedActivity: SealedLightActivity) :
     LightScreen<Unit, ScanProgressViewModel>(sealedActivity) {
@@ -60,13 +60,15 @@ class ScanProgressScreen(sealedActivity: SealedLightActivity) :
     override val viewModelClass: Class<ScanProgressViewModel>
         get() = ScanProgressViewModel::class.java
 
-    override fun createViewModel(): ScanProgressViewModel = ScanProgressViewModel()
+    override fun createViewModel(): ScanProgressViewModel {
+        AudiobookLibrary.init(lightContext.filesDir)
+        return ScanProgressViewModel()
+    }
 
     @Composable
     override fun Content() {
         val done by viewModel.done.collectAsState()
         val themeColors by LightThemeController.colors.collectAsState()
-        val volumePanel by viewModel.volumePanel.collectAsState()
 
         LightTheme(colors = themeColors) {
             Box(modifier = Modifier.fillMaxSize()) {
@@ -116,12 +118,6 @@ class ScanProgressScreen(sealedActivity: SealedLightActivity) :
                     ),
                 )
                 }
-                // Full-screen overlay on top of everything (the panel is a
-                // visual replica — not interactive).
-                VolumePanelOverlay(
-                    state = volumePanel,
-                    onDismiss = { viewModel.dismissVolumePanel() },
-                )
             }
         }
     }

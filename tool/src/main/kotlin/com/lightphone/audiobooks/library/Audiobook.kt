@@ -1,4 +1,4 @@
-package com.lightphone.audiobooks.server.library
+package com.lightphone.audiobooks.library
 
 enum class AudiobookSource {
     Local,

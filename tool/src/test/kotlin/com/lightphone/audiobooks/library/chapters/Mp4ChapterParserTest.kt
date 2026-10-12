@@ -1,9 +1,9 @@
-package com.lightphone.audiobooks.server.library.chapters
+package com.lightphone.audiobooks.library.chapters
 
-import com.lightphone.audiobooks.server.library.EmbeddedChapter
+import com.lightphone.audiobooks.library.EmbeddedChapter
 import java.io.ByteArrayInputStream
-import org.junit.Assert.assertEquals
-import org.junit.Test
+import kotlin.test.assertEquals
+import kotlin.test.Test
 
 /**
  * JVM coverage for [Mp4ChapterParser] using hand-built MP4 fixtures in

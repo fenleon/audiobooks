@@ -1,6 +1,8 @@
 package com.lightphone.audiobooks
 
-import com.thelightphone.sdk.shared.LightServiceMethod
+import com.lightphone.audiobooks.library.Audiobook
+import com.lightphone.audiobooks.library.AudiobookPart
+import com.lightphone.audiobooks.library.EmbeddedChapter
 
 /** Formats a duration in milliseconds as m:ss or h:mm:ss. */
 fun formatTime(milliseconds: Long): String {
@@ -27,15 +29,15 @@ fun chapterLabel(index: Int, count: Int): String =
  * carry embedded chapters today (they get exactly one part), so the flattened
  * list is that part's chapters.
  */
-fun embeddedChapters(book: LightServiceMethod.GetBooks.Book): List<LightServiceMethod.GetBooks.Chapter> =
+fun embeddedChapters(book: Audiobook): List<EmbeddedChapter> =
     book.parts.flatMap { it.chapters }
 
 /** Global start of a part: the sum of the durations of all earlier parts. */
-fun partStartMs(book: LightServiceMethod.GetBooks.Book, partIndex: Int): Long =
-    book.parts.take(partIndex).sumOf { it.durationMs.coerceAtLeast(0) }
+fun partStartMs(book: Audiobook, partIndex: Int): Long =
+    book.parts.take(partIndex).sumOf { it.durationMilliseconds.coerceAtLeast(0) }
 
 /** Index of the chapter containing [positionMs] (an offset within the part), clamped to the last chapter. */
-fun chapterIndexAt(chapters: List<LightServiceMethod.GetBooks.Chapter>, positionMs: Long): Int {
+fun chapterIndexAt(chapters: List<EmbeddedChapter>, positionMs: Long): Int {
     if (chapters.isEmpty()) return 0
     val index = chapters.indexOfFirst { positionMs < it.endMs }
     return if (index >= 0) index else chapters.lastIndex

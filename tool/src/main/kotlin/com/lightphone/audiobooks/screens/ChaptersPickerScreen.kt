@@ -14,17 +14,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
+import com.lightphone.audiobooks.AudiobookLibrary
 import com.lightphone.audiobooks.AppLightViewModel
-import com.lightphone.audiobooks.MediaClient
 import com.lightphone.audiobooks.chapterIndexAt
 import com.lightphone.audiobooks.embeddedChapters
 import com.lightphone.audiobooks.formatTime
+import com.lightphone.audiobooks.library.Audiobook
+import com.lightphone.audiobooks.library.LocalBookRepository
 import com.lightphone.audiobooks.partStartMs
-import com.lightphone.audiobooks.VolumePanelOverlay
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
-import com.thelightphone.sdk.shared.LightServiceMethod
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightScrollView
@@ -40,7 +40,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 
 class ChaptersPickerViewModel(
-    private val book: LightServiceMethod.GetBooks.Book,
+    private val book: Audiobook,
 ) : AppLightViewModel<Int>() {
 
     /** The current entry (embedded-chapter or part index), highlighted in the list. */
@@ -49,13 +49,13 @@ class ChaptersPickerViewModel(
     override fun onScreenShow(screen: SimpleLightScreen<Int>) {
         super.onScreenShow(screen)
         // Highlight from the book's saved position. The snapshot passed at
-        // navigation time goes stale the moment playback advances, so re-fetch
+        // navigation time goes stale the moment playback advances, so re-read
         // the book (the Player saves progress on pause and every few seconds
         // while playing) and re-derive.
-        currentIndex.value = indexFor(book.progressMs)
+        currentIndex.value = indexFor(book.positionMilliseconds)
         viewModelScope.launch {
-            val fresh = MediaClient.getBooks().firstOrNull { it.id == book.id } ?: return@launch
-            currentIndex.value = indexFor(fresh.progressMs)
+            val fresh = LocalBookRepository.refreshedBooks().firstOrNull { it.id == book.id } ?: return@launch
+            currentIndex.value = indexFor(fresh.positionMilliseconds)
         }
     }
 
@@ -76,19 +76,21 @@ class ChaptersPickerViewModel(
  */
 class ChaptersPickerScreen(
     sealedActivity: SealedLightActivity,
-    private val book: LightServiceMethod.GetBooks.Book,
+    private val book: Audiobook,
 ) : LightScreen<Int, ChaptersPickerViewModel>(sealedActivity) {
 
     override val viewModelClass: Class<ChaptersPickerViewModel>
         get() = ChaptersPickerViewModel::class.java
 
-    override fun createViewModel(): ChaptersPickerViewModel = ChaptersPickerViewModel(book)
+    override fun createViewModel(): ChaptersPickerViewModel {
+        AudiobookLibrary.init(lightContext.filesDir)
+        return ChaptersPickerViewModel(book)
+    }
 
     @Composable
     override fun Content() {
         val currentIndex by viewModel.currentIndex.collectAsState()
         val themeColors by LightThemeController.colors.collectAsState()
-        val volumePanel by viewModel.volumePanel.collectAsState()
         val chapters = embeddedChapters(book)
 
         LightTheme(colors = themeColors) {
@@ -124,22 +126,16 @@ class ChaptersPickerScreen(
                         book.parts.forEachIndexed { index, part ->
                             ChapterRow(
                                 title = part.title.ifBlank { "Chapter ${index + 1}" },
-                                durationMs = part.durationMs,
+                                durationMs = part.durationMilliseconds,
                                 isCurrent = index == currentIndex,
                                 onClick = { goBack(index) },
                             )
                         }
                     }
                 }
-                // Full-screen overlay on top of everything (the panel is a
-                // visual replica — not interactive).
-                VolumePanelOverlay(
-                    state = volumePanel,
-                    onDismiss = { viewModel.dismissVolumePanel() },
-                )
+                }
             }
         }
-    }
     }
 }
 

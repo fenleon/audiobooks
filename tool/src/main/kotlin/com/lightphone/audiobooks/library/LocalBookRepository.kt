@@ -1,47 +1,41 @@
-package com.lightphone.audiobooks.server.library
+package com.lightphone.audiobooks.library
 
-import android.Manifest
-import android.content.ContentUris
-import android.content.Context
-import android.content.pm.PackageManager
 import android.media.MediaMetadataRetriever
-import android.media.MediaScannerConnection
-import android.net.Uri
-import android.os.Build
 import android.os.Environment
-import android.provider.MediaStore
-import android.util.Log
-import com.lightphone.audiobooks.server.library.chapters.Id3v2ChapterParser
-import com.lightphone.audiobooks.server.library.chapters.Mp4ChapterParser
+import com.lightphone.audiobooks.library.chapters.Id3v2ChapterParser
+import com.lightphone.audiobooks.library.chapters.Mp4ChapterParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.FileInputStream
 import java.security.MessageDigest
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicInteger
-import kotlin.coroutines.resume
 
-private const val TAG = "LocalBooks"
 private const val AUDIOBOOKS_DIRECTORY = "Audiobooks"
 
 sealed interface LocalScanResult {
-    data object PermissionRequired : LocalScanResult
     data object FolderMissing : LocalScanResult
     data object Empty : LocalScanResult
     data class Success(val books: List<Audiobook>) : LocalScanResult
 }
 
+/**
+ * Scans the shared `Audiobooks/` folder on external storage into books, in
+ * process (Rung-1 fold: formerly behind the tool's LightSdkService). Files are
+ * read directly by absolute path — metadata via MediaMetadataRetriever, embedded
+ * chapters via FileInputStream — and playback references are absolute paths the
+ * tool's detached player feeds to LightAudioSource.FileSource.
+ *
+ * Scans are incremental: a persistent `(path, size, mtime)` metadata cache
+ * (scan_cache.json in the tool's filesDir) means unchanged files are never
+ * re-read — only new/changed files hit MediaMetadataRetriever.
+ */
 object LocalBookRepository {
-    private lateinit var appContext: Context
     private val scanMutex = Mutex()
     private val mutableBooks = MutableStateFlow<List<Audiobook>>(emptyList())
     private val mutableScanResult = MutableStateFlow<LocalScanResult?>(null)
@@ -50,66 +44,32 @@ object LocalBookRepository {
 
     // Scan metadata cache: absolute path -> metadata for that file, keyed by
     // (size, mtime). Unchanged files are never re-read, so scans after the
-    // first one are a cheap walk + MediaStore query (the Bard "re-reads
-    // everything every time" problem).
+    // first one are a cheap walk.
     private var metadataCache: MutableMap<String, CachedMetadata>? = null
+
+    private lateinit var filesDir: File
 
     val books: StateFlow<List<Audiobook>> = mutableBooks.asStateFlow()
     val scanResult: StateFlow<LocalScanResult?> = mutableScanResult.asStateFlow()
     val scanning: StateFlow<Boolean> = mutableScanning.asStateFlow()
 
-    fun init(context: Context) {
-        appContext = context.applicationContext
-    }
+    /** Whether any scan has completed (the first Library show kicks it). */
+    val hasScanned: Boolean
+        get() = mutableScanResult.value != null
 
-    /** Application context for launching the system delete-consent flow. */
-    val applicationContext: Context
-        get() = appContext
-
-    fun requiredPermission(): String = if (Build.VERSION.SDK_INT >= 33) {
-        Manifest.permission.READ_MEDIA_AUDIO
-    } else {
-        Manifest.permission.READ_EXTERNAL_STORAGE
-    }
-
-    fun hasReadPermission(): Boolean =
-        appContext.checkSelfPermission(requiredPermission()) == PackageManager.PERMISSION_GRANTED
-
-    fun updateBook(book: Audiobook) {
-        mutableBooks.update { current ->
-            current.map { existing -> if (existing.id == book.id) book else existing }
-        }
-    }
-
-    fun publishPermissionRequired() {
-        mutableScanResult.value = LocalScanResult.PermissionRequired
-    }
-
-    suspend fun deleteBook(book: Audiobook): Boolean = withContext(Dispatchers.IO) {
-        if (book.source != AudiobookSource.Local) return@withContext false
-        val references = book.parts.map { it.playbackReference }
-            .ifEmpty { listOf(book.playbackReference) }
-        val deleted = references.all { reference ->
-            val uri = runCatching { Uri.parse(reference) }.getOrNull()
-                ?: return@all false
-            runCatching { appContext.contentResolver.delete(uri, null, null) > 0 }
-                .getOrDefault(false)
-        }
-        if (deleted) scan()
-        deleted
+    fun init(filesDir: File) {
+        this.filesDir = filesDir
     }
 
     suspend fun scan(): LocalScanResult {
         if (!scanMutex.tryLock()) return mutableScanResult.value ?: LocalScanResult.Empty
         mutableScanning.value = true
         val generation = ++scanGeneration
-        Log.d(TAG, "scan generation=$generation started")
         return try {
             val result = scanFresh(generation)
             val snapshot = (result as? LocalScanResult.Success)?.books.orEmpty()
             mutableBooks.value = snapshot
             mutableScanResult.value = result
-            Log.d(TAG, "repository snapshot count=${snapshot.size}")
             result
         } finally {
             mutableScanning.value = false
@@ -117,19 +77,38 @@ object LocalBookRepository {
         }
     }
 
-    private suspend fun scanFresh(generation: Int): LocalScanResult = withContext(Dispatchers.IO) {
-        if (!hasReadPermission()) return@withContext LocalScanResult.PermissionRequired
+    /**
+     * The scanned books with their persisted progress re-applied — the library
+     * reads positions through this so rows show what the player last saved.
+     */
+    suspend fun refreshedBooks(): List<Audiobook> = withContext(Dispatchers.IO) {
+        val updated = mutableBooks.value.map { book ->
+            val stored = AudiobookProgressStore.read(book.source, book.id)
+            book.copy(
+                positionMilliseconds = stored.positionMilliseconds.coerceAtMost(
+                    book.durationMilliseconds.takeIf { it > 0 } ?: Long.MAX_VALUE,
+                ),
+                playbackSpeed = stored.playbackSpeed,
+                completed = stored.completed,
+                lastPlayedAtMilliseconds = stored.lastPlayedAtMilliseconds,
+                lastUpdatedAtMilliseconds = stored.lastUpdatedAtMilliseconds,
+            )
+        }
+        mutableBooks.value = updated
+        updated
+    }
 
-        // MediaStore does not represent empty directories. This existence-only probe lets the companion
-        // distinguish a missing top-level folder while all file discovery remains in the walk + MediaStore.
+    private suspend fun scanFresh(generation: Int): LocalScanResult = withContext(Dispatchers.IO) {
+        // The existence-only probe distinguishes a missing top-level folder
+        // from an empty one; all file discovery is the walk itself.
         val rootDirectory = File(
             Environment.getExternalStorageDirectory(),
             AUDIOBOOKS_DIRECTORY,
         )
         val folderExists = rootDirectory.isDirectory
         // Discover every audio file under Audiobooks/ (any depth), so books kept in
-        // subfolders are indexed directly instead of waiting for a MediaStore rescan.
-        val directCandidates = if (folderExists) {
+        // subfolders are indexed directly.
+        val candidates = if (folderExists) {
             runCatching {
                 rootDirectory.walkTopDown()
                     .filter { file ->
@@ -143,30 +122,19 @@ object LocalBookRepository {
             emptyList()
         }
 
-        // MediaStore supplies content URIs (stable ids, playback references) for
-        // indexed files. Only files it has never seen are handed to the media
-        // scanner — on a cached run that's none, so the 10s indexing window is
-        // never hit and the scan stays a cheap walk + query.
-        val rows = queryMediaStoreUris(rootDirectory)
-        val missing = directCandidates.filter { it.absolutePath !in rows }
-        val scannedUris = withTimeoutOrNull(10_000) {
-            requestMediaIndexing(missing)
-        }.orEmpty()
-        Log.d(TAG, "scan generation=$generation strategy=walk-index-mediastore (${missing.size} to index)")
-
         val cache = metadataCache()
         var cacheDirty = false
         var cacheHits = 0
         var cacheMisses = 0
         // Reads the file's metadata unless an unchanged (size, mtime) entry is cached.
-        fun metadataFor(file: File, uri: Uri): CachedMetadata {
+        fun metadataFor(file: File): CachedMetadata {
             val size = file.length().coerceAtLeast(0)
             val mtime = file.lastModified()
             val cached = cache[file.absolutePath]
             // A cached zero duration means the metadata read never succeeded
-            // (e.g. the first scan raced MediaStore indexing). Treat it as a
-            // miss so a later successful read heals the entry instead of
-            // pinning "00:00" for as long as the file is unchanged.
+            // (e.g. the first scan raced the file copy). Treat it as a miss so
+            // a later successful read heals the entry instead of pinning
+            // "00:00" for as long as the file is unchanged.
             if (cached != null && cached.size == size && cached.mtimeMillis == mtime &&
                 cached.durationMilliseconds > 0
             ) {
@@ -174,7 +142,7 @@ object LocalBookRepository {
                 return cached
             }
             cacheMisses++
-            val embedded = readMetadata(uri)
+            val embedded = readMetadata(file)
             val fresh = CachedMetadata(
                 size = size,
                 mtimeMillis = mtime,
@@ -191,27 +159,25 @@ object LocalBookRepository {
         }
 
         // Drop entries for files that no longer exist so the cache stays bounded.
-        val candidatePaths = directCandidates.mapTo(HashSet()) { it.absolutePath }
+        val candidatePaths = candidates.mapTo(HashSet()) { it.absolutePath }
         if (cache.keys.removeAll { it !in candidatePaths }) cacheDirty = true
 
         val formatCounts = linkedMapOf<String, Int>()
         val accepted = linkedMapOf<String, Audiobook>()
         val folderParts = linkedMapOf<String, LinkedHashMap<String, LocalPartCandidate>>()
-        val seenUris = HashSet<String>()
-        for (file in directCandidates) {
+        val seenPaths = HashSet<String>()
+        for (file in candidates) {
             val path = file.absolutePath
-            val uri = rows[path] ?: scannedUris[path] ?: continue
-            if (!seenUris.add(uri.toString())) continue
+            if (!seenPaths.add(path)) continue
             val displayName = file.name
             val size = file.length().coerceAtLeast(0)
-            val cached = metadataFor(file, uri)
+            val cached = metadataFor(file)
             val isMp4Container = displayName.endsWith(".m4b", ignoreCase = true) ||
                 displayName.endsWith(".m4a", ignoreCase = true)
             val ext = displayName.substringAfterLast('.', "").lowercase()
             formatCounts[ext] = (formatCounts[ext] ?: 0) + 1
             val folderPath = folderPathOf(path, rootDirectory)
-            val mediaId = ContentUris.parseId(uri)
-            val stableId = "external:$mediaId"
+            val stableId = "file:${path.normalizedHash()}"
             if (folderPath == null) {
                 val stored = AudiobookProgressStore.read(AudiobookSource.Local, stableId)
                 val duration = cached.durationMilliseconds.takeIf { it > 0 }
@@ -223,7 +189,7 @@ object LocalBookRepository {
                 val chapters = if (cached.chaptersParsed) {
                     cached.chapters
                 } else {
-                    readEmbeddedChapters(uri, isMp4Container, duration).also {
+                    readEmbeddedChapters(file, isMp4Container, duration).also {
                         cache[path] = cached.copy(chapters = it, chaptersParsed = true)
                         cacheDirty = true
                     }
@@ -231,7 +197,7 @@ object LocalBookRepository {
                 accepted[stableId] = audiobookFrom(
                     stableId = stableId,
                     displayName = displayName,
-                    uri = uri,
+                    filePath = path,
                     embedded = cached.toEmbeddedMetadata(),
                     stored = stored,
                     duration = duration,
@@ -242,7 +208,7 @@ object LocalBookRepository {
                 folderParts.getOrPut(folderPath) { linkedMapOf() }[displayName.lowercase()] =
                     LocalPartCandidate(
                         displayName = displayName,
-                        uri = uri,
+                        filePath = path,
                         embedded = cached.toEmbeddedMetadata(),
                         fileSizeBytes = size,
                     )
@@ -266,7 +232,7 @@ object LocalBookRepository {
                         .thenComparator { a, b -> naturalOrder(a.displayName, b.displayName) }
                 },
             )
-            val stableId = "folder:${folderPath.normalizedFolderHash()}"
+            val stableId = "folder:${folderPath.normalizedHash()}"
             val stored = AudiobookProgressStore.read(AudiobookSource.Local, stableId)
             val duration = ordered.sumOf { it.embedded.durationMilliseconds.coerceAtLeast(0) }
                 .takeIf { it > 0 } ?: stored.durationMilliseconds
@@ -282,7 +248,7 @@ object LocalBookRepository {
                 author = ordered.firstNotNullOfOrNull {
                     it.embedded.author.takeIf(String::isNotBlank)
                 }.orEmpty(),
-                playbackReference = ordered.first().uri.toString(),
+                playbackReference = ordered.first().filePath,
                 durationMilliseconds = duration,
                 positionMilliseconds = stored.positionMilliseconds.coerceAtMost(
                     duration.takeIf { it > 0 } ?: Long.MAX_VALUE,
@@ -294,7 +260,7 @@ object LocalBookRepository {
                 fileSizeBytes = ordered.sumOf { it.fileSizeBytes },
                 parts = ordered.map {
                     AudiobookPart(
-                        playbackReference = it.uri.toString(),
+                        playbackReference = it.filePath,
                         durationMilliseconds = it.embedded.durationMilliseconds,
                         title = it.embedded.title.ifBlank {
                             it.displayName.removeSupportedSuffix()
@@ -304,17 +270,9 @@ object LocalBookRepository {
             )
         }
 
-        if (cacheDirty) {
-            cachePrefs().edit()
-                .putString(SCAN_CACHE_KEY, encodeCache(cache))
-                .apply()
-        }
+        if (cacheDirty) persistCache(cache)
 
         val books = accepted.values.sortedBy { it.title.lowercase() }
-        Log.d(TAG, "audiobooks folder found=$folderExists")
-        Log.d(TAG, "candidate count=${directCandidates.size}")
-        Log.d(TAG, "local book count=${books.size} (metadata cache hits=$cacheHits, misses=$cacheMisses)")
-        Log.d(TAG, "format counts=$formatCounts")
         when {
             books.isNotEmpty() -> LocalScanResult.Success(books)
             !folderExists -> LocalScanResult.FolderMissing
@@ -322,78 +280,10 @@ object LocalBookRepository {
         }
     }
 
-    /** Maps each indexed file's absolute path to its content URI, for files under Audiobooks/. */
-    private fun queryMediaStoreUris(rootDirectory: File): Map<String, Uri> {
-        val collection = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-        val projection = buildList {
-            add(MediaStore.Audio.Media._ID)
-            add(MediaStore.Audio.Media.DISPLAY_NAME)
-            if (Build.VERSION.SDK_INT >= 29) add(MediaStore.Audio.Media.RELATIVE_PATH)
-            if (Build.VERSION.SDK_INT < 29) add(MediaStore.Audio.Media.DATA)
-        }.toTypedArray()
-        val selection: String
-        val arguments: Array<String>
-        if (Build.VERSION.SDK_INT >= 29) {
-            selection = "${MediaStore.Audio.Media.RELATIVE_PATH} LIKE ?"
-            arguments = arrayOf("$AUDIOBOOKS_DIRECTORY/%")
-        } else {
-            val root = Environment.getExternalStorageDirectory().absolutePath
-            selection = "${MediaStore.Audio.Media.DATA} LIKE ?"
-            arguments = arrayOf("$root/$AUDIOBOOKS_DIRECTORY/%")
-        }
-        val rows = HashMap<String, Uri>()
-        runCatching {
-            appContext.contentResolver.query(
-                collection,
-                projection,
-                selection,
-                arguments,
-                null,
-            )?.use { cursor ->
-                val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
-                val nameColumn = cursor.getColumnIndex(MediaStore.Audio.Media.DISPLAY_NAME)
-                val relativePathColumn = cursor.getColumnIndex(MediaStore.Audio.Media.RELATIVE_PATH)
-                val dataColumn = cursor.getColumnIndex(MediaStore.Audio.Media.DATA)
-                while (cursor.moveToNext()) {
-                    val absolutePath = if (Build.VERSION.SDK_INT >= 29) {
-                        val relativePath = cursor.getString(relativePathColumn).orEmpty()
-                        val displayName = if (nameColumn >= 0) cursor.getString(nameColumn).orEmpty() else ""
-                        Environment.getExternalStorageDirectory().absolutePath +
-                            "/$relativePath$displayName"
-                    } else {
-                        if (dataColumn >= 0) cursor.getString(dataColumn).orEmpty() else ""
-                    }
-                    if (absolutePath.isBlank()) continue
-                    val mediaId = cursor.getLong(idColumn)
-                    rows[absolutePath] = ContentUris.withAppendedId(collection, mediaId)
-                }
-            }
-        }
-        return rows
-    }
-
-    private suspend fun requestMediaIndexing(files: List<File>): Map<String, Uri> {
-        if (files.isEmpty()) return emptyMap()
-        return suspendCancellableCoroutine { continuation ->
-            val remaining = AtomicInteger(files.size)
-            val indexed = ConcurrentHashMap<String, Uri>()
-            MediaScannerConnection.scanFile(
-                appContext,
-                files.map { it.absolutePath }.toTypedArray(),
-                files.map { mimeTypeFor(it.name) }.toTypedArray(),
-            ) { path, uri ->
-                if (uri != null) indexed[path] = uri
-                if (remaining.decrementAndGet() == 0 && continuation.isActive) {
-                    continuation.resume(indexed.toMap())
-                }
-            }
-        }
-    }
-
     private fun audiobookFrom(
         stableId: String,
         displayName: String,
-        uri: Uri,
+        filePath: String,
         embedded: EmbeddedMetadata,
         stored: AudiobookProgress,
         duration: Long,
@@ -404,7 +294,7 @@ object LocalBookRepository {
         source = AudiobookSource.Local,
         title = embedded.title.ifBlank { displayName.removeSupportedSuffix() },
         author = embedded.author,
-        playbackReference = uri.toString(),
+        playbackReference = filePath,
         durationMilliseconds = duration,
         positionMilliseconds = stored.positionMilliseconds.coerceAtMost(
             duration.takeIf { it > 0 } ?: Long.MAX_VALUE,
@@ -419,7 +309,7 @@ object LocalBookRepository {
         // auto-play-off boundary pause work off the file's own chapters.
         parts = if (chapters.isEmpty()) emptyList() else listOf(
             AudiobookPart(
-                playbackReference = uri.toString(),
+                playbackReference = filePath,
                 durationMilliseconds = duration,
                 chapters = chapters,
             ),
@@ -427,21 +317,21 @@ object LocalBookRepository {
     )
 
     /** Parses embedded chapters (MP3 CHAP / MP4 bookmarks) for a single-file book. */
-    private fun readEmbeddedChapters(uri: Uri, isMp4Container: Boolean, durationMs: Long): List<EmbeddedChapter> =
+    private fun readEmbeddedChapters(file: File, isMp4Container: Boolean, durationMs: Long): List<EmbeddedChapter> =
         runCatching {
-            appContext.contentResolver.openInputStream(uri)?.use { input ->
+            FileInputStream(file).use { input ->
                 if (isMp4Container) {
                     Mp4ChapterParser.parse(input, durationMs)
                 } else {
                     Id3v2ChapterParser.parse(input, durationMs)
                 }
-            } ?: emptyList()
+            }
         }.getOrDefault(emptyList())
 
-    private fun readMetadata(uri: Uri): EmbeddedMetadata {
+    private fun readMetadata(file: File): EmbeddedMetadata {
         val retriever = MediaMetadataRetriever()
         return try {
-            retriever.setDataSource(appContext, uri)
+            retriever.setDataSource(file.absolutePath)
             val title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE).orEmpty().trim()
             val author = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST).orEmpty().trim()
             val album = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM).orEmpty().trim()
@@ -473,17 +363,6 @@ object LocalBookRepository {
     private fun String.hasSupportedExtension(): Boolean =
         SUPPORTED_EXTENSIONS.any { endsWith(it, ignoreCase = true) }
 
-    /** MIME the media scanner should record for a file (sniffing would also work, this keeps rows exact). */
-    private fun mimeTypeFor(name: String): String = when {
-        name.endsWith(".m4b", true) || name.endsWith(".m4a", true) -> "audio/mp4"
-        name.endsWith(".aac", true) -> "audio/aac"
-        name.endsWith(".ogg", true) || name.endsWith(".oga", true) -> "audio/ogg"
-        name.endsWith(".opus", true) -> "audio/opus"
-        name.endsWith(".flac", true) -> "audio/flac"
-        name.endsWith(".wav", true) -> "audio/wav"
-        else -> "audio/mpeg"
-    }
-
     /**
      * Resolves the folder a file belongs to, relative to Audiobooks/ (e.g. "MyTestBook" or
      * "Series/Hemingway/ForWhomTheBellTolls"). Files directly inside Audiobooks/ return null
@@ -496,7 +375,7 @@ object LocalBookRepository {
         return relative.takeIf { it.isNotBlank() && it != "." }
     }
 
-    private fun String.normalizedFolderHash(): String {
+    private fun String.normalizedHash(): String {
         val bytes = MessageDigest.getInstance("SHA-256")
             .digest(lowercase().trim().toByteArray())
         return bytes.take(12).joinToString("") { "%02x".format(it) }
@@ -504,8 +383,7 @@ object LocalBookRepository {
 
     // --- scan metadata cache ------------------------------------------------
 
-    private const val SCAN_CACHE_PREFS = "scan_metadata_cache"
-    private const val SCAN_CACHE_KEY = "cache_v1"
+    private const val SCAN_CACHE_FILE = "scan_cache.json"
 
     private data class CachedMetadata(
         val size: Long,
@@ -529,15 +407,18 @@ object LocalBookRepository {
         )
     }
 
-    private fun cachePrefs() =
-        appContext.getSharedPreferences(SCAN_CACHE_PREFS, Context.MODE_PRIVATE)
+    private fun cacheFile() = File(filesDir, SCAN_CACHE_FILE)
 
     private fun metadataCache(): MutableMap<String, CachedMetadata> {
         metadataCache?.let { return it }
-        return decodeCache(cachePrefs().getString(SCAN_CACHE_KEY, null)).also { metadataCache = it }
+        val loaded = readJson(cacheFile())?.let { root -> decodeCache(root) }
+            ?.toMutableMap()
+            ?: mutableMapOf()
+        metadataCache = loaded
+        return loaded
     }
 
-    private fun encodeCache(cache: Map<String, CachedMetadata>): String {
+    private fun persistCache(cache: Map<String, CachedMetadata>) {
         val root = JSONObject()
         cache.forEach { (path, meta) ->
             val chapters = JSONArray()
@@ -559,48 +440,43 @@ object LocalBookRepository {
                     .put("chaptersParsed", meta.chaptersParsed),
             )
         }
-        return root.toString()
+        writeJsonAtomically(cacheFile(), root)
     }
 
-    private fun decodeCache(encoded: String?): MutableMap<String, CachedMetadata> {
-        if (encoded.isNullOrBlank()) return mutableMapOf()
-        return runCatching {
-            val root = JSONObject(encoded)
-            buildMap {
-                val keys = root.keys()
-                while (keys.hasNext()) {
-                    val path = keys.next()
-                    val o = root.getJSONObject(path)
-                    val chapters = buildList {
-                        val arr = o.getJSONArray("chapters")
-                        for (i in 0 until arr.length()) {
-                            val c = arr.getJSONArray(i)
-                            add(EmbeddedChapter(c.getString(0), c.getLong(1), c.getLong(2)))
-                        }
+    private fun decodeCache(root: JSONObject): Map<String, CachedMetadata> =
+        buildMap {
+            val keys = root.keys()
+            while (keys.hasNext()) {
+                val path = keys.next()
+                val o = root.getJSONObject(path)
+                val chapters = buildList {
+                    val arr = o.getJSONArray("chapters")
+                    for (i in 0 until arr.length()) {
+                        val c = arr.getJSONArray(i)
+                        add(EmbeddedChapter(c.getString(0), c.getLong(1), c.getLong(2)))
                     }
-                    put(
-                        path,
-                        CachedMetadata(
-                            size = o.getLong("size"),
-                            mtimeMillis = o.getLong("mtime"),
-                            title = o.optString("title"),
-                            author = o.optString("author"),
-                            album = o.optString("album"),
-                            durationMilliseconds = o.optLong("duration"),
-                            trackNumber = o.optInt("track"),
-                            discNumber = o.optInt("disc"),
-                            chapters = chapters,
-                            chaptersParsed = o.optBoolean("chaptersParsed"),
-                        ),
-                    )
                 }
-            }.toMutableMap()
-        }.getOrDefault(mutableMapOf())
-    }
+                put(
+                    path,
+                    CachedMetadata(
+                        size = o.getLong("size"),
+                        mtimeMillis = o.getLong("mtime"),
+                        title = o.optString("title"),
+                        author = o.optString("author"),
+                        album = o.optString("album"),
+                        durationMilliseconds = o.optLong("duration"),
+                        trackNumber = o.optInt("track"),
+                        discNumber = o.optInt("disc"),
+                        chapters = chapters,
+                        chaptersParsed = o.optBoolean("chaptersParsed"),
+                    ),
+                )
+            }
+        }
 
     private data class LocalPartCandidate(
         val displayName: String,
-        val uri: Uri,
+        val filePath: String,
         val embedded: EmbeddedMetadata,
         val fileSizeBytes: Long,
     )

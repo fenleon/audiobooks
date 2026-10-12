@@ -23,16 +23,13 @@ dependencyResolutionManagement {
 rootProject.name = "audiobooks"
 
 include(":tool")
-include(":server")
 
-// Audiobooks is a single-APK project since 2026-08-18: `:tool` is the real
-// LightOS tool (lighttool.toml + the light-sdk tool plugin, LightScreen UI);
-// `:server` is the merged companion as an Android LIBRARY whose manifest
-// contributes the SDK server components (LightSdkService, media provider,
-// consent/permission activities) and whose ServerBootstrapProvider wires the
-// SDK server + scan at app start. The tool binds to itself (lighttool.toml
-// serverPackage = com.lightphone.audiobooks). Both consume the SDK as an
-// included build.
+// Audiobooks is a single scanned :tool module (Rung-1 fold, 2026-10): the
+// scan, stores, and playback file access run in-process behind the tool's
+// SealedLightContext, the former :server library module is gone, and
+// lighttool.toml points at com.lightos. History: it was a tool + companion
+// APK pair until 2026-08-18, then a merged single APK with an embedded
+// :server library module. It consumes the SDK as an included build.
 includeBuild("../light-sdk") {
     dependencySubstitution {
         substitute(module("com.thelightphone:sdk-ui")).using(project(":sdk:ui"))

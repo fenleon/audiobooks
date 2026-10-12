@@ -17,11 +17,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
+import com.lightphone.audiobooks.AudiobookLibrary
 import com.lightphone.audiobooks.AppLightViewModel
-import com.lightphone.audiobooks.MediaClient
-import com.lightphone.audiobooks.VolumePanelOverlay
+import com.lightphone.audiobooks.library.PlaybackSettingsStore
 import com.thelightphone.sdk.LightScreen
-import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
@@ -35,8 +34,10 @@ import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.lightClickable
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class SettingsViewModel : AppLightViewModel<Unit>() {
 
@@ -48,14 +49,14 @@ class SettingsViewModel : AppLightViewModel<Unit>() {
         if (loaded) return
         loaded = true
         viewModelScope.launch {
-            MediaClient.autoPlayNext()?.let { autoPlayNext.value = it }
+            autoPlayNext.value = withContext(Dispatchers.IO) { PlaybackSettingsStore.autoPlayNext }
         }
     }
 
     fun toggleAutoPlayNext() {
         viewModelScope.launch {
             val next = !autoPlayNext.value
-            MediaClient.setAutoPlayNext(next)
+            withContext(Dispatchers.IO) { PlaybackSettingsStore.autoPlayNext = next }
             autoPlayNext.value = next
         }
     }
@@ -67,13 +68,15 @@ class SettingsScreen(sealedActivity: SealedLightActivity) :
     override val viewModelClass: Class<SettingsViewModel>
         get() = SettingsViewModel::class.java
 
-    override fun createViewModel(): SettingsViewModel = SettingsViewModel()
+    override fun createViewModel(): SettingsViewModel {
+        AudiobookLibrary.init(lightContext.filesDir)
+        return SettingsViewModel()
+    }
 
     @Composable
     override fun Content() {
         val autoPlayNext by viewModel.autoPlayNext.collectAsState()
         val themeColors by LightThemeController.colors.collectAsState()
-        val volumePanel by viewModel.volumePanel.collectAsState()
 
         LightTheme(colors = themeColors) {
             Box(modifier = Modifier.fillMaxSize()) {
@@ -143,12 +146,6 @@ class SettingsScreen(sealedActivity: SealedLightActivity) :
                             .padding(horizontal = 24.dp, vertical = 14.dp),
                     )
                 }
-                // Full-screen overlay on top of everything (the panel is a
-                // visual replica — not interactive).
-                VolumePanelOverlay(
-                    state = volumePanel,
-                    onDismiss = { viewModel.dismissVolumePanel() },
-                )
             }
         }
     }

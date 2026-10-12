@@ -1,6 +1,6 @@
-package com.lightphone.audiobooks.server.library.chapters
+package com.lightphone.audiobooks.library.chapters
 
-import com.lightphone.audiobooks.server.library.EmbeddedChapter
+import com.lightphone.audiobooks.library.EmbeddedChapter
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 

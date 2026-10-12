@@ -1,9 +1,10 @@
 package com.lightphone.audiobooks
 
+import com.lightphone.audiobooks.library.Audiobook
+import com.lightphone.audiobooks.library.LocalBookRepository
 import com.lightphone.audiobooks.screens.LibraryScreen
 import com.lightphone.audiobooks.screens.PlayerScreen
 import com.thelightphone.sdk.SimpleLightScreen
-import com.thelightphone.sdk.shared.LightServiceMethod
 
 /**
  * Process-level record of what the tool's detached player is doing, surviving
@@ -42,7 +43,7 @@ object PlayerSession {
  */
 suspend fun settleReopenToPlayer(
     screen: SimpleLightScreen<*>,
-    book: LightServiceMethod.GetBooks.Book? = null,
+    book: Audiobook? = null,
 ): Boolean {
     if (!PlayerSession.reopenPending) return false
     if (book != null && book.id == PlayerSession.loadedBookId) {
@@ -64,7 +65,7 @@ suspend fun settleReopenToPlayer(
             PlayerSession.reopenPending = false
             return false
         }
-        val playingBook = MediaClient.getBooks().firstOrNull { it.id == playingBookId } ?: run {
+        val playingBook = LocalBookRepository.refreshedBooks().firstOrNull { it.id == playingBookId } ?: run {
             PlayerSession.reopenPending = false
             return false
         }

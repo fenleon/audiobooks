@@ -17,17 +17,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
+import com.lightphone.audiobooks.AudiobookLibrary
 import com.lightphone.audiobooks.AppLightViewModel
-import com.lightphone.audiobooks.MediaClient
 import com.lightphone.audiobooks.PlayerSession
 import com.lightphone.audiobooks.chapterIndexAt
 import com.lightphone.audiobooks.chapterLabel
 import com.lightphone.audiobooks.embeddedChapters
 import com.lightphone.audiobooks.formatSpeed
 import com.lightphone.audiobooks.formatTime
+import com.lightphone.audiobooks.library.Audiobook
+import com.lightphone.audiobooks.library.AudiobookProgressStore
+import com.lightphone.audiobooks.library.EmbeddedChapter
+import com.lightphone.audiobooks.library.PlaybackSettingsStore
 import com.lightphone.audiobooks.partStartMs
 import com.lightphone.audiobooks.settleReopenToPlayer
-import com.lightphone.audiobooks.VolumePanelOverlay
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
@@ -39,7 +42,6 @@ import com.thelightphone.sdk.audio.LightAudioPlayer
 import com.thelightphone.sdk.audio.LightAudioSource
 import com.thelightphone.sdk.audio.LightAudioUsage
 import com.thelightphone.sdk.audio.LightMediaMetadata
-import com.thelightphone.sdk.shared.LightServiceMethod
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightBottomBar
 import com.thelightphone.sdk.ui.LightIcon
@@ -52,13 +54,16 @@ import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTouchableProgressBar
 import com.thelightphone.sdk.ui.lightClickable
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import java.io.File
 
 /** Everything the player screen renders, live or preview. */
 data class PlayerUiState(
@@ -78,13 +83,13 @@ data class PlayerUiState(
 )
 
 class PlayerViewModel(
-    private val book: LightServiceMethod.GetBooks.Book,
+    private val book: Audiobook,
     private val audio: LightAudio,
 ) : AppLightViewModel<Unit>() {
 
     /** This screen is the (possibly stale) Player for [book] — settles the
      *  reopen itself in onScreenShow instead of letting the base do it. */
-    override val reopenBook: LightServiceMethod.GetBooks.Book? = book
+    override val reopenBook: Audiobook? = book
 
     private val _ui = MutableStateFlow(
         PlayerUiState(
@@ -92,9 +97,9 @@ class PlayerViewModel(
             title = book.title,
             author = book.author.takeIf { it.isNotBlank() },
             partIndex = savedPartIndex(book),
-            partCount = book.partCount,
-            positionMs = book.progressMs,
-            durationMs = book.durationMs,
+            partCount = book.parts.size,
+            positionMs = book.positionMilliseconds,
+            durationMs = book.durationMilliseconds,
             playing = false,
             speed = 1f,
             error = null,
@@ -124,9 +129,10 @@ class PlayerViewModel(
             // Reopen-to-Player cascade: settle if this is the playing book's
             // Player, pop if it is a stale preview of another book.
             if (settleReopenToPlayer(screen, book)) return@launch
-            // Global settings come from the companion; the player applies them.
-            autoPlayNext = MediaClient.autoPlayNext() ?: true
-            val speed = MediaClient.playbackSpeed() ?: 1f
+            // Global settings are read from the in-process store; the player
+            // applies them.
+            autoPlayNext = withContext(Dispatchers.IO) { PlaybackSettingsStore.autoPlayNext }
+            val speed = withContext(Dispatchers.IO) { PlaybackSettingsStore.playbackSpeed }
             _ui.update { it.copy(speed = speed) }
             val p = player() ?: return@launch
             p.speed = speed
@@ -146,9 +152,10 @@ class PlayerViewModel(
      *  when the screen is popped (releasing does not stop detached playback). */
     private suspend fun player(): LightAudioPlayer? {
         playerHandle?.let { h ->
-            if (withTimeoutOrNull(READY_TIMEOUT_MS) { h.awaitReady() } == true &&
-                h.isSessionAlive()
-            ) {
+            // Upstream SDK: awaitReady() returning true is the reuse gate (the
+            // fork's isSessionAlive() command probe is not available here; a
+            // dead-binder wedge would surface as the timeout below).
+            if (withTimeoutOrNull(READY_TIMEOUT_MS) { h.awaitReady() } == true) {
                 observe(h)
                 return h
             }
@@ -272,7 +279,9 @@ class PlayerViewModel(
         if (references.isEmpty()) return
         val items = references.map { reference ->
             LightAudioItem(
-                source = LightAudioSource.UrlSource(MediaClient.proxyUri(reference)),
+                // Library files are read directly by absolute path (Rung-1
+                // fold — formerly content URIs through the merged provider).
+                source = LightAudioSource.FileSource(File(reference)),
                 metadata = LightMediaMetadata(
                     title = book.title,
                     artist = book.author.takeIf { it.isNotBlank() },
@@ -283,12 +292,12 @@ class PlayerViewModel(
         // queueing at the saved end position would play a fraction of a second
         // and stop. Only the explicit play path restarts — opening paused at a
         // chapter keeps the exact position.
-        val restarted = autoPlay && book.durationMs > 0 &&
-            (positionMs ?: book.progressMs) >= book.durationMs - END_EPSILON_MS
+        val restarted = autoPlay && book.durationMilliseconds > 0 &&
+            (positionMs ?: book.positionMilliseconds) >= book.durationMilliseconds - END_EPSILON_MS
         val target = if (restarted) {
             0L
         } else {
-            (positionMs ?: book.progressMs).coerceAtLeast(0)
+            (positionMs ?: book.positionMilliseconds).coerceAtLeast(0)
         }
         val startIndex = locatePart(target).coerceIn(0, items.lastIndex)
         val within = target - partStartMs(book, startIndex)
@@ -304,7 +313,7 @@ class PlayerViewModel(
                 live = true,
                 partIndex = startIndex,
                 positionMs = target,
-                durationMs = book.durationMs,
+                durationMs = book.durationMilliseconds,
             )
         }
         adoptLive(p)
@@ -360,8 +369,8 @@ class PlayerViewModel(
 
     /** Seeks on the book's global timeline, crossing part boundaries. */
     private fun seekToGlobal(p: LightAudioPlayer, targetMs: Long) {
-        val durations = book.parts.map { it.durationMs.coerceAtLeast(0) }
-        val total = durations.takeIf { it.isNotEmpty() }?.sum() ?: book.durationMs
+        val durations = book.parts.map { it.durationMilliseconds.coerceAtLeast(0) }
+        val total = durations.takeIf { it.isNotEmpty() }?.sum() ?: book.durationMilliseconds
         val target = targetMs.coerceIn(0, total.takeIf { it > 0 } ?: Long.MAX_VALUE)
         val part = locatePart(target)
         val current = p.currentMediaItemIndex.value.coerceAtLeast(0)
@@ -418,13 +427,15 @@ class PlayerViewModel(
     fun setSpeed(value: Float) {
         _ui.update { it.copy(speed = value) }
         playerHandle?.speed = value
-        viewModelScope.launch { MediaClient.setSpeed(value) }
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { PlaybackSettingsStore.playbackSpeed = value }
+        }
     }
 
     private fun maybeRestartEnded(p: LightAudioPlayer) {
         // An ended book restarts from the beginning, like the old player did.
         if (!p.isPlaying.value && p.durationMs.value > 0 &&
-            p.currentMediaItemIndex.value == book.partCount - 1 &&
+            p.currentMediaItemIndex.value == book.parts.size - 1 &&
             p.positionMs.value >= p.durationMs.value - END_EPSILON_MS
         ) {
             seekToGlobal(p, 0L)
@@ -444,13 +455,15 @@ class PlayerViewModel(
         lastSavedAt = System.currentTimeMillis()
         val state = _ui.value
         viewModelScope.launch {
-            MediaClient.saveProgress(book.id, state.positionMs, state.durationMs, state.speed)
+            withContext(Dispatchers.IO) {
+                AudiobookProgressStore.saveLocal(book, state.positionMs, state.durationMs, state.speed)
+            }
         }
     }
 
     /** Index of the part containing [positionMs] on the global timeline (part 0 for single-file books). */
     private fun locatePart(positionMs: Long): Int {
-        val durations = book.parts.map { it.durationMs.coerceAtLeast(0) }
+        val durations = book.parts.map { it.durationMilliseconds.coerceAtLeast(0) }
         if (durations.isEmpty()) return 0
         var remaining = positionMs.coerceAtLeast(0)
         durations.forEachIndexed { index, duration ->
@@ -461,7 +474,7 @@ class PlayerViewModel(
     }
 
     /** Embedded chapters of the given part (single-file books with embedded chapters). */
-    private fun chaptersFor(index: Int): List<LightServiceMethod.GetBooks.Chapter> =
+    private fun chaptersFor(index: Int): List<EmbeddedChapter> =
         book.parts.getOrNull(index)?.chapters.orEmpty()
 
     private fun checkChapterBoundary(p: LightAudioPlayer) {
@@ -500,23 +513,25 @@ class PlayerViewModel(
 
 class PlayerScreen(
     private val sealedActivity: SealedLightActivity,
-    private val book: LightServiceMethod.GetBooks.Book,
+    private val book: Audiobook,
 ) : LightScreen<Unit, PlayerViewModel>(sealedActivity) {
 
     override val viewModelClass: Class<PlayerViewModel>
         get() = PlayerViewModel::class.java
 
-    override fun createViewModel(): PlayerViewModel = PlayerViewModel(
-        book = book,
-        audio = DefaultLightAudio(sealedActivity),
-    )
+    override fun createViewModel(): PlayerViewModel {
+        AudiobookLibrary.init(lightContext.filesDir)
+        return PlayerViewModel(
+            book = book,
+            audio = DefaultLightAudio(sealedActivity),
+        )
+    }
 
     @Composable
     override fun Content() {
         val ui by viewModel.ui.collectAsState()
         val hasPlayed by viewModel.hasPlayed.collectAsState()
         val themeColors by LightThemeController.colors.collectAsState()
-        val volumePanel by viewModel.volumePanel.collectAsState()
         val chapters = embeddedChapters(book)
 
         LightTheme(colors = themeColors) {
@@ -560,7 +575,7 @@ class PlayerScreen(
                         // is playing — preview shows the saved position only.
                         onSeekFraction = if (ui.live) viewModel::seekToFraction else { _ -> },
                     )
-                }
+                    }
                 LightBottomBar(
                     modifier = Modifier.navigationBarsPadding(),
                     items = listOf(
@@ -579,7 +594,7 @@ class PlayerScreen(
                         // Chapters view from the book's own data; a tap from a
                         // preview loads this book paused at the chosen chapter
                         // instead of seeking whatever is playing.
-                        if (book.partCount > 1 || chapters.size > 1) LightBarButton.LightIcon(
+                        if (book.parts.size > 1 || chapters.size > 1) LightBarButton.LightIcon(
                             icon = LightIcons.LIST,
                             onClick = { openChapters() },
                             contentDescription = "Chapters",
@@ -587,12 +602,6 @@ class PlayerScreen(
                     ),
                 )
                 }
-                // Full-screen overlay on top of everything (the panel is a
-                // visual replica — not interactive).
-                VolumePanelOverlay(
-                    state = volumePanel,
-                    onDismiss = { viewModel.dismissVolumePanel() },
-                )
             }
         }
     }
@@ -754,8 +763,8 @@ private fun TransportButton(
 private data class ChapterTime(val startMs: Long, val durationMs: Long, val positionMs: Long)
 
 /** The part the book's saved position falls in (part 0 for single-file books). */
-private fun savedPartIndex(book: LightServiceMethod.GetBooks.Book): Int =
-    book.parts.indices.lastOrNull { partStartMs(book, it) <= book.progressMs } ?: 0
+private fun savedPartIndex(book: Audiobook): Int =
+    book.parts.indices.lastOrNull { partStartMs(book, it) <= book.positionMilliseconds } ?: 0
 
 /**
  * Maps the book-global playback state onto the current chapter, so the player
@@ -765,7 +774,7 @@ private fun savedPartIndex(book: LightServiceMethod.GetBooks.Book): Int =
  * durations — e.g. single-file books without embedded chapters.
  */
 private fun chapterTime(
-    book: LightServiceMethod.GetBooks.Book,
+    book: Audiobook,
     state: PlayerUiState,
 ): ChapterTime? {
     val index = state.partIndex.coerceAtLeast(0)
@@ -782,7 +791,7 @@ private fun chapterTime(
             positionMs = (positionInPart - current.startMs).coerceIn(0, duration),
         )
     }
-    val duration = part.durationMs
+    val duration = part.durationMilliseconds
     if (duration <= 0) return null
     return ChapterTime(
         startMs = start,

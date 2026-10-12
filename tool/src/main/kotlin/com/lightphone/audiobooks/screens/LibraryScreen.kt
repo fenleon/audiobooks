@@ -20,13 +20,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
+import com.lightphone.audiobooks.AudiobookLibrary
 import com.lightphone.audiobooks.AppLightViewModel
-import com.lightphone.audiobooks.MediaClient
 import com.lightphone.audiobooks.PlayerSession
-import com.lightphone.audiobooks.VolumePanelOverlay
+import com.lightphone.audiobooks.library.Audiobook
+import com.lightphone.audiobooks.library.LocalBookRepository
 import com.thelightphone.sdk.InitialScreen
 import com.thelightphone.sdk.LightScreen
-import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.checkPermission
@@ -51,7 +51,7 @@ import kotlinx.coroutines.launch
 
 class LibraryViewModel : AppLightViewModel<Unit>() {
 
-    val books = MutableStateFlow<List<LightServiceMethod.GetBooks.Book>>(emptyList())
+    val books = MutableStateFlow<List<Audiobook>>(emptyList())
     val loading = MutableStateFlow(true)
 
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
@@ -62,33 +62,24 @@ class LibraryViewModel : AppLightViewModel<Unit>() {
     fun refresh() {
         viewModelScope.launch {
             loading.value = true
-            var result = MediaClient.getBooks()
-            // A cold start can bind before the companion finishes its initial
-            // scan; retry briefly so the library doesn't flash "No books found".
-            repeat(EMPTY_REFRESH_RETRIES) {
-                if (result.isNotEmpty()) return@repeat
-                delay(EMPTY_REFRESH_DELAY_MS)
-                result = MediaClient.getBooks()
-            }
-            books.value = result
+            // The first Library show kicks the initial scan (the old bootstrap
+            // provider did it at app start; there is no Application hook here).
+            if (!LocalBookRepository.hasScanned) LocalBookRepository.scan()
+            books.value = LocalBookRepository.refreshedBooks()
             loading.value = false
         }
     }
 
     /** Runs a full scan (e.g. right after the audio permission is granted —
-     *  the bootstrap scan already ran without it and returned an empty
+     *  the initial scan already ran without it and returned an empty
      *  snapshot, so a plain refresh would stay empty). */
     fun scan() {
         viewModelScope.launch {
             loading.value = true
-            books.value = MediaClient.scanLibrary()
+            LocalBookRepository.scan()
+            books.value = LocalBookRepository.refreshedBooks()
             loading.value = false
         }
-    }
-
-    private companion object {
-        const val EMPTY_REFRESH_RETRIES = 3
-        const val EMPTY_REFRESH_DELAY_MS = 1_000L
     }
 }
 
@@ -106,15 +97,16 @@ class LibraryScreen(sealedActivity: SealedLightActivity) :
     override val viewModelClass: Class<LibraryViewModel>
         get() = LibraryViewModel::class.java
 
-    override fun createViewModel(): LibraryViewModel = LibraryViewModel()
+    override fun createViewModel(): LibraryViewModel {
+        AudiobookLibrary.init(lightContext.filesDir)
+        return LibraryViewModel()
+    }
 
     @Composable
     override fun Content() {
         val books by viewModel.books.collectAsState()
         val loading by viewModel.loading.collectAsState()
         val themeColors by LightThemeController.colors.collectAsState()
-        val volumePanel by viewModel.volumePanel.collectAsState()
-        val bluetoothConnected by viewModel.bluetoothConnected.collectAsState()
         // The detached player keeps playing after the Player screen pops;
         // PlayerSession records what it's doing. Resolved against the current
         // book list (a deleted book hides the button).
@@ -124,14 +116,14 @@ class LibraryScreen(sealedActivity: SealedLightActivity) :
             null
         }
 
-        // The merged build has no companion activity to ask for the audio
-        // permission (the old companion's launcher did it on first open).
-        // When the library is empty: if the permission is missing, launch the
-        // SDK permission flow (system dialog) and rescan once the grant
-        // lands; if it's present, rescan once — the bootstrap scan ran before
-        // a fresh grant (e.g. granted in system settings) and left a stale
-        // empty snapshot. Guarded so it runs once per screen instance: no
-        // dialog spam on every navigation, no scan loop on loading flips.
+        // The audio permission (READ_MEDIA_AUDIO) is declared in
+        // lighttool.toml; the SDK permission flow asks for it. When the
+        // library is empty: if the permission is missing, launch the SDK
+        // permission flow (system dialog) and rescan once the grant lands; if
+        // it's present, rescan once — the initial scan ran before a fresh
+        // grant (e.g. granted in system settings) and left a stale empty
+        // snapshot. Guarded so it runs once per screen instance: no dialog
+        // spam on every navigation, no scan loop on loading flips.
         val permissionLauncher = rememberPermissionRequestLauncher(Manifest.permission.READ_MEDIA_AUDIO)
         var permissionPrompted = remember { false }
         LaunchedEffect(books.isEmpty(), loading) {
@@ -199,60 +191,30 @@ class LibraryScreen(sealedActivity: SealedLightActivity) :
                                     onClick = { openPlayer(book) },
                                 )
                             },
-                            LightBarButton.LightIcon(
-                                // Connected state adds the underline variant
-                                // (same convention as the downloaded-arrow icon).
-                                icon = if (bluetoothConnected) {
-                                    LightIcons.BLUETOOTH_CONNECTED
-                                } else {
-                                    LightIcons.BLUETOOTH
-                                },
-                                onClick = { openBluetoothBridge() },
-                                contentDescription = if (bluetoothConnected) {
-                                    "Bluetooth connected"
-                                } else {
-                                    "Bluetooth settings"
-                                },
-                            ),
                         ),
                     )
                 }
-                // Full-screen overlay on top of everything (the panel is a
-                // visual replica — not interactive).
-                VolumePanelOverlay(
-                    state = volumePanel,
-                    onDismiss = { viewModel.dismissVolumePanel() },
-                )
             }
         }
     }
 
-    private fun openPlayer(book: LightServiceMethod.GetBooks.Book) {
+    private fun openPlayer(book: Audiobook) {
         navigateTo(screenFactory = { PlayerScreen(it, book) })
     }
 
     private fun openSettings() {
         navigateTo(screenFactory = { SettingsScreen(it) })
     }
-
-    /** The merged build hosts the Bluetooth-settings bridge activity itself
-     *  (it can't launch activities from the background, so the tool starts
-     *  this transparent activity, which opens the system settings). */
-    private fun openBluetoothBridge() {
-        startServerActivity(
-            "com.lightphone.audiobooks/com.lightphone.audiobooks.server.BluetoothSettingsActivity",
-        )
-    }
 }
 
 @Composable
 private fun BookRow(
-    book: LightServiceMethod.GetBooks.Book,
+    book: Audiobook,
     onOpen: () -> Unit,
 ) {
     val themeColors by LightThemeController.colors.collectAsState()
-    val progress = if (book.durationMs > 0) {
-        book.progressMs.toFloat() / book.durationMs
+    val progress = if (book.durationMilliseconds > 0) {
+        book.positionMilliseconds.toFloat() / book.durationMilliseconds
     } else {
         0f
     }

@@ -51,7 +51,7 @@ Play your local-only audiobooks on the Light Phone III, built using the Light SD
 Needs JDK 17/21, the Android SDK (API 36), and the Light SDK checked out as a sibling folder at `../light-sdk` (fork: [fenleon/light-sdk](https://github.com/fenleon/light-sdk)).
 
 ```bash
-./gradlew :app:assembleDebug
+./gradlew :tool:assembleDebug
 ```
 
 Release signing: see `RELEASE.md`.

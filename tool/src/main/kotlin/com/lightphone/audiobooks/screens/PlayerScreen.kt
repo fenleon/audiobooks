@@ -107,7 +107,8 @@ class PlayerViewModel(
     val hasPlayed = MutableStateFlow(false)
 
     private var playerHandle: LightAudioPlayer? = null
-    private var observing = false
+    private var observedHandle: LightAudioPlayer? = null
+    private var observationJob: kotlinx.coroutines.Job? = null
     private var autoPlayNext = true
     private var lastSavedAt = 0L
     /** Wall-clock time of the last pause observed by this VM (0 = none). */
@@ -145,7 +146,12 @@ class PlayerViewModel(
      *  when the screen is popped (releasing does not stop detached playback). */
     private suspend fun player(): LightAudioPlayer? {
         playerHandle?.let { h ->
-            if (withTimeoutOrNull(READY_TIMEOUT_MS) { h.awaitReady() } == true) return h
+            if (withTimeoutOrNull(READY_TIMEOUT_MS) { h.awaitReady() } == true &&
+                h.isSessionAlive()
+            ) {
+                observe(h)
+                return h
+            }
             // The controller connection can die without emitting Unavailable
             // (LP3 cached-app freezer unfreeze) — awaitReady would suspend
             // forever and every action path hangs silently. Drop and rebuild.
@@ -157,6 +163,7 @@ class PlayerViewModel(
         }.getOrNull() ?: return null
         playerHandle = p
         return if (withTimeoutOrNull(READY_TIMEOUT_MS) { p.awaitReady() } == true) {
+            observe(p)
             p
         } else {
             runCatching { p.release() }
@@ -173,64 +180,68 @@ class PlayerViewModel(
         refreshState(p)
     }
 
-    /** Wires the SDK player's flows to this screen's state. Idempotent. */
+    /** Wires the SDK player's flows to this screen's state. Re-runs on handle
+     *  rebuild: the old handle's collectors are cancelled with it. */
     private fun observe(p: LightAudioPlayer) {
-        if (observing) return
-        observing = true
-        viewModelScope.launch {
-            p.isPlaying.collect { playing ->
-                _ui.update { it.copy(playing = playing) }
-                PlayerSession.isPlaying = playing
-                if (!playing && _ui.value.live) {
-                    lastPausedAt = System.currentTimeMillis()
-                    saveProgress()
-                }
-            }
-        }
-        viewModelScope.launch {
-            p.currentMediaItemIndex.collect { index ->
-                // With Auto-Play off, a queue advance is a chapter boundary:
-                // pause at the new part's start instead of flowing into it.
-                if (index > lastPartIndex && lastPartIndex >= 0 &&
-                    _ui.value.playing && !autoPlayNext
-                ) {
-                    p.pause()
-                }
-                lastPartIndex = index
-                refreshState(p)
-            }
-        }
-        viewModelScope.launch {
-            p.durationMs.collect { duration ->
-                // A pending seek applies once its target item's duration
-                // resolves (LightAudioPlayer clamps seeks to a known duration).
-                if (duration > 0) {
-                    val pending = pendingSeekMs
-                    if (pending != null) {
-                        pendingSeekMs = null
-                        p.seekTo(pending)
-                        refreshState(p)
+        if (observedHandle === p) return
+        observedHandle = p
+        observationJob?.cancel()
+        observationJob = viewModelScope.launch {
+            launch {
+                p.isPlaying.collect { playing ->
+                    _ui.update { it.copy(playing = playing) }
+                    PlayerSession.isPlaying = playing
+                    if (!playing && _ui.value.live) {
+                        lastPausedAt = System.currentTimeMillis()
+                        saveProgress()
                     }
                 }
             }
-        }
-        viewModelScope.launch {
-            p.positionMs.collect { refreshState(p) }
-        }
-        viewModelScope.launch {
-            p.error.collect { error ->
-                _ui.update { it.copy(error = error?.let { e -> "${e.kind}: ${e.diagnostic}" }) }
+            launch {
+                p.currentMediaItemIndex.collect { index ->
+                    // With Auto-Play off, a queue advance is a chapter boundary:
+                    // pause at the new part's start instead of flowing into it.
+                    if (index > lastPartIndex && lastPartIndex >= 0 &&
+                        _ui.value.playing && !autoPlayNext
+                    ) {
+                        p.pause()
+                    }
+                    lastPartIndex = index
+                    refreshState(p)
+                }
             }
-        }
-        // Time-based work only while playing: embedded-chapter boundary pauses
-        // (Auto-Play off) and progress persistence.
-        viewModelScope.launch {
-            while (isActive) {
-                delay(1000)
-                if (p.isPlaying.value && _ui.value.live) {
-                    checkChapterBoundary(p)
-                    if (System.currentTimeMillis() - lastSavedAt >= SAVE_INTERVAL_MS) {
-                        saveProgress()
+            launch {
+                p.durationMs.collect { duration ->
+                    // A pending seek applies once its target item's duration
+                    // resolves (LightAudioPlayer clamps seeks to a known duration).
+                    if (duration > 0) {
+                        val pending = pendingSeekMs
+                        if (pending != null) {
+                            pendingSeekMs = null
+                            p.seekTo(pending)
+                            refreshState(p)
+                        }
+                    }
+                }
+            }
+            launch {
+                p.positionMs.collect { refreshState(p) }
+            }
+            launch {
+                p.error.collect { error ->
+                    _ui.update { it.copy(error = error?.let { e -> "${e.kind}: ${e.diagnostic}" }) }
+                }
+            }
+            // Time-based work only while playing: embedded-chapter boundary pauses
+            // (Auto-Play off) and progress persistence.
+            launch {
+                while (isActive) {
+                    delay(1000)
+                    if (p.isPlaying.value && _ui.value.live) {
+                        checkChapterBoundary(p)
+                        if (System.currentTimeMillis() - lastSavedAt >= SAVE_INTERVAL_MS) {
+                            saveProgress()
+                        }
                     }
                 }
             }

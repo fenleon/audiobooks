@@ -22,10 +22,10 @@ dependencyResolutionManagement {
 
 rootProject.name = "audiobooks"
 
-include(":app")
+include(":tool")
 include(":server")
 
-// Audiobooks is a single-APK project since 2026-08-18: `:app` is the real
+// Audiobooks is a single-APK project since 2026-08-18: `:tool` is the real
 // LightOS tool (lighttool.toml + the light-sdk tool plugin, LightScreen UI);
 // `:server` is the merged companion as an Android LIBRARY whose manifest
 // contributes the SDK server components (LightSdkService, media provider,

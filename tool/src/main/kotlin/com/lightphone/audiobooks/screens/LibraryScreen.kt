@@ -187,10 +187,13 @@ class LibraryScreen(sealedActivity: SealedLightActivity) :
                             ),
                             playingBook?.let { book ->
                                 LightBarButton.Text(
-                                    text = "PLAYING",
+                                    text = "NOW PLAYING",
                                     onClick = { openPlayer(book) },
                                 )
                             },
+                            // Balancing spacer: keeps NOW PLAYING centered
+                            // (the bar's mixed icon/text/empty layout).
+                            null,
                         ),
                     )
                 }

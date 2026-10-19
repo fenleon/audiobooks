@@ -7,11 +7,19 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
 import com.lightphone.audiobooks.AudiobookLibrary
@@ -36,8 +44,11 @@ import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.lightClickable
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 class ChaptersPickerViewModel(
     private val book: Audiobook,
@@ -92,6 +103,16 @@ class ChaptersPickerScreen(
         val currentIndex by viewModel.currentIndex.collectAsState()
         val themeColors by LightThemeController.colors.collectAsState()
         val chapters = embeddedChapters(book)
+        // Opens with the current chapter at the top of the viewport: each row
+        // records its y offset, and once the current row's offset resolves the
+        // scroll lands on it (one frame later, so maxValue reflects layout).
+        val scrollState = rememberScrollState()
+        val rowTops = remember { mutableStateMapOf<Int, Int>() }
+        LaunchedEffect(currentIndex) {
+            val y = snapshotFlow { rowTops[currentIndex] }.filterNotNull().first()
+            withFrameNanos { }
+            scrollState.scrollTo(y.coerceAtMost(scrollState.maxValue))
+        }
 
         LightTheme(colors = themeColors) {
             Box(modifier = Modifier.fillMaxSize()) {
@@ -108,7 +129,7 @@ class ChaptersPickerScreen(
                         ),
                         center = LightTopBarCenter.Text("Chapters"),
                     )
-                    LightScrollView {
+                    LightScrollView(scrollState = scrollState) {
                     // Embedded chapters (single-file books) list the file's own
                     // chapters; folder books list their parts. Both return the
                     // tapped index, which the player resolves to a seek.
@@ -120,6 +141,9 @@ class ChaptersPickerScreen(
                                 durationMs = duration,
                                 isCurrent = index == currentIndex,
                                 onClick = { goBack(index) },
+                                modifier = Modifier.onGloballyPositioned {
+                                    rowTops[index] = it.positionInParent().y.roundToInt()
+                                },
                             )
                         }
                     } else {
@@ -129,6 +153,9 @@ class ChaptersPickerScreen(
                                 durationMs = part.durationMilliseconds,
                                 isCurrent = index == currentIndex,
                                 onClick = { goBack(index) },
+                                modifier = Modifier.onGloballyPositioned {
+                                    rowTops[index] = it.positionInParent().y.roundToInt()
+                                },
                             )
                         }
                     }
@@ -145,9 +172,10 @@ private fun ChapterRow(
     durationMs: Long,
     isCurrent: Boolean,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .lightClickable(onClick = onClick)
             // Left margin only: the scroll view already reserves the right

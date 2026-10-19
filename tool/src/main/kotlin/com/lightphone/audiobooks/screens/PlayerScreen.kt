@@ -42,6 +42,7 @@ import com.thelightphone.sdk.audio.LightAudioPlayer
 import com.thelightphone.sdk.audio.LightAudioSource
 import com.thelightphone.sdk.audio.LightAudioUsage
 import com.thelightphone.sdk.audio.LightMediaMetadata
+import com.thelightphone.sdk.audio.LightPlayerSpec
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightBottomBar
 import com.thelightphone.sdk.ui.LightIcon
@@ -166,7 +167,9 @@ class PlayerViewModel(
             playerHandle = null
         }
         val p = runCatching {
-            audio.newPlayer(usage = LightAudioUsage.Speech, playback = LightAudioPlayback.Detached)
+            audio.newPlayer(
+                LightPlayerSpec(usage = LightAudioUsage.Speech, playback = LightAudioPlayback.Detached),
+            )
         }.getOrNull() ?: return null
         playerHandle = p
         return if (withTimeoutOrNull(READY_TIMEOUT_MS) { p.awaitReady() } == true) {
@@ -270,7 +273,6 @@ class PlayerViewModel(
     /** Loads this book on the player (replacing whatever was loaded). */
     private suspend fun queueBook(
         p: LightAudioPlayer,
-        partIndex: Int = 0,
         positionMs: Long? = null,
         autoPlay: Boolean,
     ) {
@@ -414,7 +416,10 @@ class PlayerViewModel(
                 if (chapters.isNotEmpty()) {
                     queueBook(p, positionMs = chapters[index].startMs, autoPlay = false)
                 } else {
-                    queueBook(p, partIndex = index, autoPlay = false)
+                    // Folder books: the part's global start is the target — the
+                    // saved position must not win (a finished book would load
+                    // its end, where Play only restarts from chapter 1).
+                    queueBook(p, positionMs = partStartMs(book, index), autoPlay = false)
                 }
             } else if (chapters.isNotEmpty()) {
                 seekToGlobal(p, chapters[index].startMs)

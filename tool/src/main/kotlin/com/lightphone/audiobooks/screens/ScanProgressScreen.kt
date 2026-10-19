@@ -92,9 +92,9 @@ class ScanProgressScreen(sealedActivity: SealedLightActivity) :
                     )
                     LightText(
                         text = if (done) {
-                            "Scan complete."
+                            "Scan complete"
                         } else {
-                            "Audiobooks are being scanned in the background."
+                            "Audiobooks are being scanned in the background"
                         },
                         variant = LightTextVariant.Detail,
                         align = TextAlign.Center,

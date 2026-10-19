@@ -232,9 +232,14 @@ private fun BookRow(
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(modifier = Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    // The percent shares the title's text baseline: their
+                    // bottoms sit on the same line.
+                    .alignByBaseline(),
+            ) {
                 LightText(
                     text = book.title,
                     variant = LightTextVariant.Copy,
@@ -250,8 +255,11 @@ private fun BookRow(
             LightText(
                 text = "${(progress.coerceIn(0f, 1f) * 100).toInt()}%",
                 variant = LightTextVariant.Fine,
+                modifier = Modifier.alignByBaseline(),
             )
         }
+        // A touch more air between the author line and the bar.
+        Spacer(modifier = Modifier.height(6.dp))
         LightProgressBar(
             colors = themeColors,
             progress = progress,

@@ -1,8 +1,8 @@
 [tool]
 id = "com.lightphone.audiobooks"
 label = "Audiobooks"
-versionCode = 28
-versionName = "0.9.0"
+versionCode = 29
+versionName = "0.9.1"
 permissions = ["android.permission.READ_MEDIA_AUDIO", "android.permission.POST_NOTIFICATIONS"]
 capabilities = ["detached-audio", "tool-manager-provider"]
 # Tool Library line: binds Light's own platform service (com.lightos). The
